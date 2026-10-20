@@ -208,4 +208,16 @@ restore_validate_stage()
     snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_snapshot_id)"
     backup_restic_snapshot_id_is_valid "${snapshot}" \
         || fail "Manifest restic snapshot id is missing or not a restic id."
+
+    #
+    # Older manifests omit this field. An empty or missing value stays
+    # valid. It does not by itself identify a copied snapshot.
+    #
+
+    if grep -q '^restic_external_snapshot_id=.' "${stage}/manifest.txt"; then
+        local external_snapshot
+        external_snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_external_snapshot_id)"
+        backup_restic_snapshot_id_is_valid "${external_snapshot}" \
+            || fail "Manifest restic external snapshot id is not a restic id."
+    fi
 }

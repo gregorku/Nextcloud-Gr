@@ -140,6 +140,32 @@ backup_restic_verify_snapshot()
     backup_restic_verify_snapshot_at "$(env_get RESTIC_REPOSITORY)" "$1"
 }
 
+###############################################################################
+# Print yes or no. An empty id is no and does not contact restic.
+#
+# Arguments:
+#   $1 - Repository
+#   $2 - Snapshot id
+#
+###############################################################################
+
+backup_snapshot_present_in_repository()
+{
+    local repo="$1"
+    local snapshot="$2"
+
+    if [[ -z "${snapshot}" ]]; then
+        printf 'no\n'
+        return 0
+    fi
+
+    if backup_restic_verify_snapshot_at "${repo}" "${snapshot}"; then
+        printf 'yes\n'
+    else
+        printf 'no\n'
+    fi
+}
+
 backup_restic_snapshot_exists()
 {
     local snapshot="$1"
@@ -186,6 +212,335 @@ backup_restic_copy_snapshot()
 
     shred -u "${passfile}" 2>/dev/null || rm -f "${passfile}"
     return "${status}"
+}
+
+###############################################################################
+# Read one JSON string field. The field "id" does not match "short_id".
+#
+# Arguments:
+#   $1 - JSON file
+#   $2 - Field name
+#
+###############################################################################
+
+backup_restic_json_string_field()
+{
+    local file="$1"
+    local field="$2"
+
+    awk -v field="${field}" '
+        {
+            pattern = "\"" field "\"[[:space:]]*:[[:space:]]*\"([^\"]*)\""
+            if (match($0, pattern, found)) {
+                print found[1]
+                exit
+            }
+        }
+    ' "${file}"
+}
+
+###############################################################################
+# Find the snapshot id in a snapshots --json document whose tree, time
+# and hostname match. restic copy may store that object under a new id.
+#
+# Arguments:
+#   $1 - Destination snapshots JSON
+#   $2 - Tree id
+#   $3 - Snapshot time
+#   $4 - Hostname
+#
+###############################################################################
+
+backup_restic_match_snapshot_id()
+{
+    local file="$1"
+    local want_tree="$2"
+    local want_time="$3"
+    local want_host="$4"
+    local matched
+    local status=0
+
+    [[ -n "${want_tree}" && -n "${want_time}" && -n "${want_host}" ]] || return 1
+
+    matched="$(
+        awk \
+            -v want_tree="${want_tree}" \
+            -v want_time="${want_time}" \
+            -v want_host="${want_host}" '
+            function take(name, value) {
+                if (name == "tree") {
+                    tree = value
+                } else if (name == "time") {
+                    time = value
+                } else if (name == "hostname") {
+                    host = value
+                } else if (name == "id") {
+                    id = value
+                }
+            }
+            function flush() {
+                if (tree == want_tree && time == want_time && host == want_host && id ~ /^[0-9a-f]{8,64}$/) {
+                    count++
+                    if (count == 1) {
+                        matched = id
+                    } else {
+                        matched = ""
+                    }
+                }
+                tree = ""
+                time = ""
+                host = ""
+                id = ""
+            }
+            BEGIN {
+                count = 0
+                matched = ""
+            }
+            {
+                while (match($0, /"(tree|time|hostname|id)"[[:space:]]*:[[:space:]]*"([^"]*)"/, found)) {
+                    take(found[1], found[2])
+                    $0 = substr($0, RSTART + RLENGTH)
+                }
+                if ($0 ~ /^[[:space:]]*\}/) {
+                    flush()
+                }
+            }
+            END {
+                if (id != "" || tree != "") {
+                    flush()
+                }
+                if (count == 1) {
+                    print matched
+                    exit 0
+                }
+                if (count > 1) {
+                    print "ambiguous"
+                    exit 1
+                }
+                print "missing"
+                exit 1
+            }
+        ' "${file}"
+    )" || status=$?
+
+    if [[ "${status}" -ne 0 ]]; then
+        printf '%s\n' "${matched:-missing}"
+        return 1
+    fi
+
+    backup_restic_snapshot_id_is_valid "${matched}" || {
+        printf 'missing\n'
+        return 1
+    }
+    printf '%s\n' "${matched}"
+}
+
+###############################################################################
+# Resolve the destination snapshot from the two JSON documents.
+#
+# Arguments:
+#   $1 - JSON from the source snapshot
+#   $2 - JSON from the destination repository
+#
+###############################################################################
+
+backup_restic_resolve_id_from_json()
+{
+    local source_json="$1"
+    local destination_json="$2"
+    local tree
+    local snapshot_time
+    local hostname
+
+    tree="$(backup_restic_json_string_field "${source_json}" tree)"
+    snapshot_time="$(backup_restic_json_string_field "${source_json}" time)"
+    hostname="$(backup_restic_json_string_field "${source_json}" hostname)"
+
+    backup_restic_match_snapshot_id "${destination_json}" "${tree}" "${snapshot_time}" "${hostname}"
+}
+
+###############################################################################
+# Copy a snapshot and print the id verified in the destination.
+#
+# The text from restic copy is discarded. The id is read from the
+# destination snapshots --json metadata and checked with cat, snapshots
+# and ls.
+#
+# Arguments:
+#   $1 - Source snapshot id
+#   $2 - Destination repository
+#
+###############################################################################
+
+backup_restic_copy_and_resolve()
+{
+    local source_id="$1"
+    local destination="$2"
+    local source_json
+    local destination_json
+    local resolved
+
+    source_json="$(mktemp)"
+    destination_json="$(mktemp)"
+
+    if ! backup_restic_run snapshots --json "${source_id}" > "${source_json}"; then
+        rm -f "${source_json}" "${destination_json}"
+        return 1
+    fi
+
+    if ! backup_restic_copy_snapshot "${source_id}" "${destination}" >/dev/null; then
+        rm -f "${source_json}" "${destination_json}"
+        return 1
+    fi
+
+    if ! backup_restic_run_at "${destination}" snapshots --json > "${destination_json}"; then
+        rm -f "${source_json}" "${destination_json}"
+        return 1
+    fi
+
+    if ! resolved="$(backup_restic_resolve_id_from_json "${source_json}" "${destination_json}")"; then
+        rm -f "${source_json}" "${destination_json}"
+        return 1
+    fi
+
+    rm -f "${source_json}" "${destination_json}"
+
+    backup_restic_verify_snapshot_at "${destination}" "${resolved}" || return 1
+    printf '%s\n' "${resolved}"
+}
+
+###############################################################################
+# Choose the snapshot verified in the repository restore will read.
+# The source id and the external id may differ.
+#
+# Arguments:
+#   $1 - Source snapshot id
+#   $2 - External snapshot id, possibly empty
+#   $3 - yes when $1 verified in the selected repository
+#   $4 - yes when $2 verified in that same repository
+#
+###############################################################################
+
+backup_choose_snapshot_id()
+{
+    local source_id="$1"
+    local external_id="$2"
+    local source_present="$3"
+    local external_present="$4"
+
+    backup_restic_snapshot_id_is_valid "${source_id}" || {
+        printf 'missing\n'
+        return 1
+    }
+
+    if [[ -n "${external_id}" ]] && ! backup_restic_snapshot_id_is_valid "${external_id}"; then
+        printf 'missing\n'
+        return 1
+    fi
+
+    if [[ -n "${external_id}" && "${external_id}" != "${source_id}" \
+        && "${source_present}" == "yes" && "${external_present}" == "yes" ]]; then
+        printf 'ambiguous\n'
+        return 1
+    fi
+
+    if [[ "${source_present}" == "yes" ]]; then
+        printf '%s\n' "${source_id}"
+        return 0
+    fi
+
+    if [[ "${external_present}" == "yes" && -n "${external_id}" ]]; then
+        printf '%s\n' "${external_id}"
+        return 0
+    fi
+
+    printf 'missing\n'
+    return 1
+}
+
+###############################################################################
+# Select the snapshot id for the repository restore will read.
+#
+# A manifest that only has restic_snapshot_id can be restored when that
+# id verifies in the repository. It cannot identify a copied snapshot
+# whose id changed. Locator metadata is accepted only when the caller
+# already proved there is exactly one match. This function does not
+# rank snapshots by time.
+#
+# Arguments:
+#   $1 - Source snapshot id
+#   $2 - External snapshot id, possibly empty
+#   $3 - yes when $1 verified in the selected repository
+#   $4 - yes when $2 verified in that same repository
+#   $5 - absent, unique, ambiguous or missing. Omitted means absent.
+#   $6 - Id from a unique locator match. Ignored unless $5 is unique.
+#
+###############################################################################
+
+backup_select_restore_snapshot()
+{
+    local source_id="$1"
+    local external_id="$2"
+    local source_present="$3"
+    local external_present="$4"
+    local locator_status="${5:-absent}"
+    local locator_id="${6:-}"
+
+    if [[ -n "${external_id}" ]]; then
+        backup_choose_snapshot_id \
+            "${source_id}" \
+            "${external_id}" \
+            "${source_present}" \
+            "${external_present}"
+        return
+    fi
+
+    if ! backup_restic_snapshot_id_is_valid "${source_id}"; then
+        printf 'missing\n'
+        return 1
+    fi
+
+    if [[ "${source_present}" == "yes" ]]; then
+        printf '%s\n' "${source_id}"
+        return 0
+    fi
+
+    if [[ "${locator_status}" == "unique" ]] \
+        && backup_restic_snapshot_id_is_valid "${locator_id}"
+    then
+        printf '%s\n' "${locator_id}"
+        return 0
+    fi
+
+    if [[ "${locator_status}" == "ambiguous" ]]; then
+        printf 'ambiguous\n'
+        return 1
+    fi
+
+    if [[ "${locator_status}" == "absent" ]]; then
+        printf 'legacy-unresolved\n'
+        return 1
+    fi
+
+    printf 'missing\n'
+    return 1
+}
+
+###############################################################################
+# The external copy is complete only with the age archive and a verified
+# snapshot id from that repository.
+#
+###############################################################################
+
+backup_external_pair_complete()
+{
+    local age_stored="$1"
+    local external_id="$2"
+    local external_verified="$3"
+
+    backup_restic_snapshot_id_is_valid "${external_id}" || return 1
+
+    [[ "${age_stored}" == "yes" && "${external_verified}" == "yes" ]]
 }
 
 ###############################################################################

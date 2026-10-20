@@ -413,7 +413,11 @@ restore_apply_stage()
     fi
 
     local snapshot
-    snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_snapshot_id)" || return 1
+    if [[ -z "${RESTORE_RESTIC_SNAPSHOT_ID:-}" ]]; then
+        warn "Refusing to restore user data without a snapshot id already verified in the selected repository."
+        return 1
+    fi
+    snapshot="${RESTORE_RESTIC_SNAPSHOT_ID}"
     backup_restic_restore_dir "${snapshot}" "$(env_get NEXTCLOUD_DATA_HOST_DIR)"
 }
 

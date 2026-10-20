@@ -186,9 +186,81 @@ if ! restore_postgres_major_ok "${manifest_major}" "${POSTGRES_MAJOR}" "no"; the
     fail "Manifest PostgreSQL major is ${manifest_major}; this stack expects ${POSTGRES_MAJOR}. Refusing to load the dump."
 fi
 
-snapshot="$(backup_manifest_field "${manifest}" restic_snapshot_id)"
-if ! backup_restic_verify_snapshot "${snapshot}"; then
-    fail "Restic repository is not reachable or snapshot ${snapshot} is not intact. Persistent data was not changed."
+source_snapshot="$(backup_manifest_field "${manifest}" restic_snapshot_id)"
+external_snapshot="$(backup_manifest_optional_field "${manifest}" restic_external_snapshot_id)"
+restore_repository="$(env_get RESTIC_REPOSITORY)"
+source_present="$(backup_snapshot_present_in_repository "${restore_repository}" "${source_snapshot}")"
+external_present="$(backup_snapshot_present_in_repository "${restore_repository}" "${external_snapshot}")"
+locator_status="absent"
+locator_id=""
+
+#
+# An old manifest has no external id and no restic tree, snapshot time
+# or hostname. created_at is not used. When the recorded id is absent,
+# a locator is accepted only after exactly one metadata match and a
+# fresh cat/snapshots/ls check of that id.
+#
+
+if [[ -z "${external_snapshot}" && "${source_present}" != "yes" ]]; then
+    if locator_text="$(backup_manifest_snapshot_locator "${manifest}")"; then
+        locator_tree="$(printf '%s\n' "${locator_text}" | sed -n '1p')"
+        locator_time="$(printf '%s\n' "${locator_text}" | sed -n '2p')"
+        locator_host="$(printf '%s\n' "${locator_text}" | sed -n '3p')"
+        locator_json="$(mktemp)"
+        if backup_restic_run_at "${restore_repository}" snapshots --json > "${locator_json}"; then
+            if locator_id="$(
+                backup_restic_match_snapshot_id \
+                    "${locator_json}" \
+                    "${locator_tree}" \
+                    "${locator_time}" \
+                    "${locator_host}"
+            )"; then
+                if [[ "$(backup_snapshot_present_in_repository "${restore_repository}" "${locator_id}")" == "yes" ]]; then
+                    locator_status="unique"
+                else
+                    locator_status="missing"
+                    locator_id=""
+                fi
+            else
+                locator_status="${locator_id}"
+                locator_id=""
+                [[ "${locator_status}" == "ambiguous" || "${locator_status}" == "missing" ]] \
+                    || locator_status="missing"
+            fi
+        else
+            locator_status="missing"
+        fi
+        rm -f "${locator_json}"
+    fi
+fi
+
+if ! snapshot="$(
+    backup_select_restore_snapshot \
+        "${source_snapshot}" \
+        "${external_snapshot}" \
+        "${source_present}" \
+        "${external_present}" \
+        "${locator_status}" \
+        "${locator_id}"
+)"; then
+    case "${snapshot}" in
+        legacy-unresolved)
+            fail "Manifest records only restic snapshot ${source_snapshot}. It is not in ${restore_repository}. The manifest has no restic tree, snapshot time or hostname, so an external copy stored under a different id cannot be identified. The newest snapshot was not selected. Persistent data was not changed."
+            ;;
+        ambiguous)
+            fail "More than one snapshot in ${restore_repository} matches this manifest. Refusing to choose one. Persistent data was not changed."
+            ;;
+        *)
+            fail "Restic repository ${restore_repository} does not contain a verified snapshot from this manifest (${snapshot}). Persistent data was not changed."
+            ;;
+    esac
+fi
+
+export RESTORE_RESTIC_SNAPSHOT_ID="${snapshot}"
+if [[ -z "${external_snapshot}" ]]; then
+    info "Restore will use recorded restic snapshot ${snapshot}. This manifest has no external id, so a copy under a different id was not searched."
+else
+    info "Restore will use restic snapshot ${snapshot} from the configured repository."
 fi
 
 if [[ "${replace_data}" != "yes" ]]; then

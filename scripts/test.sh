@@ -147,6 +147,8 @@ run_static_tests()
     test_backup_cleanup_failure
     test_backup_quiesce
     test_backup_completeness
+    test_restic_snapshot_ids_may_differ
+    test_legacy_manifest_does_not_guess_snapshot
     test_restore_confirmation
     test_restore_rejects_incomplete
     test_restore_rolls_back

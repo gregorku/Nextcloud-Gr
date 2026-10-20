@@ -625,6 +625,256 @@ test_backup_completeness()
     ok "An age archive without its restic snapshot is not a complete backup."
 }
 
+test_restic_snapshot_ids_may_differ()
+{
+    print_section "Distinct restic snapshot ids"
+
+    local work
+    local source_json
+    local destination_json
+    local resolved
+    local chosen
+    local status
+    local source_id
+    local external_id
+
+    source_id="1111111111111111111111111111111111111111111111111111111111111111"
+    external_id="2222222222222222222222222222222222222222222222222222222222222222"
+    work="$(mktemp -d)"
+    source_json="${work}/source.json"
+    destination_json="${work}/destination.json"
+
+    cat > "${source_json}" <<EOF
+[
+  {
+    "time": "2026-10-20T18:00:00Z",
+    "tree": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hostname": "nextcloud-gr",
+    "short_id": "11111111",
+    "id": "${source_id}"
+  }
+]
+EOF
+
+    cat > "${destination_json}" <<EOF
+[
+  {
+    "time": "2026-10-20T18:00:00Z",
+    "tree": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "hostname": "nextcloud-gr",
+    "short_id": "22222222",
+    "id": "${external_id}"
+  }
+]
+EOF
+
+    resolved="$(backup_restic_resolve_id_from_json "${source_json}" "${destination_json}")" \
+        || fail "Destination metadata did not identify a snapshot."
+
+    [[ "${resolved}" == "${external_id}" ]] \
+        || fail "Resolver returned ${resolved} instead of the destination id."
+
+    [[ "${resolved}" != "${source_id}" ]] \
+        || fail "Resolver assumed the source and destination ids are the same."
+
+    chosen="$(backup_choose_snapshot_id "${source_id}" "${external_id}" no yes)" \
+        || fail "A repository that has only the external id was rejected."
+
+    [[ "${chosen}" == "${external_id}" ]] \
+        || fail "Restore selected ${chosen} instead of the snapshot present in the target repository."
+
+    chosen="$(backup_choose_snapshot_id "${source_id}" "${external_id}" yes no)" \
+        || fail "A repository that has only the source id was rejected."
+
+    [[ "${chosen}" == "${source_id}" ]] \
+        || fail "Restore selected ${chosen} from the source repository."
+
+    status=0
+    chosen="$(backup_choose_snapshot_id "${source_id}" "${external_id}" yes yes)" || status=$?
+    [[ "${status}" -ne 0 && "${chosen}" == "ambiguous" ]] \
+        || fail "Two different ids in one repository were accepted (${chosen})."
+
+    if backup_external_pair_complete yes "" yes; then
+        fail "An external backup without a snapshot id was accepted."
+    fi
+
+    backup_external_pair_complete yes "${external_id}" yes \
+        || fail "An age archive plus a verified external snapshot was rejected."
+
+    rm -rf "${work}"
+
+    ok "Snapshot id selection was simulated from JSON fixtures. restic was not run and no restore was performed."
+    if ! command -v restic >/dev/null 2>&1; then
+        log_not_performed "restic copy. restic is not installed. The JSON fixture is not a restic test and no restore was performed."
+    fi
+}
+
+test_legacy_manifest_does_not_guess_snapshot()
+{
+    print_section "Older manifest snapshot id"
+
+    local work
+    local manifest
+    local destination_json
+    local ambiguous_json
+    local stage
+    local chosen
+    local status
+    local source_id
+    local older_id
+    local newer_id
+    local external_id
+    local tree_old
+    local tree_new
+
+    source_id="1111111111111111111111111111111111111111111111111111111111111111"
+    older_id="3333333333333333333333333333333333333333333333333333333333333333"
+    newer_id="4444444444444444444444444444444444444444444444444444444444444444"
+    external_id="2222222222222222222222222222222222222222222222222222222222222222"
+    tree_old="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    tree_new="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    work="$(mktemp -d)"
+    manifest="${work}/manifest.txt"
+    destination_json="${work}/destination.json"
+    ambiguous_json="${work}/ambiguous.json"
+    stage="${work}/stage"
+
+    cat > "${manifest}" <<EOF
+project=${PROJECT_NAME}
+created_at=2026-10-20T19:00:00Z
+restic_snapshot_id=${source_id}
+restic_repository_scope=local
+data_backup=restic
+EOF
+
+    cat > "${destination_json}" <<EOF
+[
+  {
+    "time": "2026-10-20T18:00:00Z",
+    "tree": "${tree_old}",
+    "hostname": "nextcloud-gr",
+    "id": "${older_id}"
+  },
+  {
+    "time": "2026-10-20T19:00:00Z",
+    "tree": "${tree_new}",
+    "hostname": "nextcloud-gr",
+    "id": "${newer_id}"
+  }
+]
+EOF
+
+    cat > "${ambiguous_json}" <<EOF
+[
+  {
+    "time": "2026-10-20T18:00:00Z",
+    "tree": "${tree_old}",
+    "hostname": "nextcloud-gr",
+    "id": "${older_id}"
+  },
+  {
+    "time": "2026-10-20T18:00:00Z",
+    "tree": "${tree_old}",
+    "hostname": "nextcloud-gr",
+    "id": "${newer_id}"
+  }
+]
+EOF
+
+    if backup_manifest_snapshot_locator "${manifest}" >/dev/null; then
+        fail "created_at was accepted as a restic snapshot locator."
+    fi
+
+    chosen="$(
+        backup_select_restore_snapshot \
+            "${source_id}" "" yes no absent "${newer_id}"
+    )" || fail "The recorded id was refused in the repository that still has it."
+
+    [[ "${chosen}" == "${source_id}" ]] \
+        || fail "Source repository restore selected ${chosen}."
+
+    status=0
+    chosen="$(
+        backup_select_restore_snapshot \
+            "${source_id}" "" no no absent "${newer_id}"
+    )" || status=$?
+
+    [[ "${status}" -ne 0 && "${chosen}" == "legacy-unresolved" ]] \
+        || fail "An old manifest selected ${chosen} from an external repository."
+
+    [[ "${chosen}" != "${newer_id}" ]] \
+        || fail "The newest snapshot was selected for an old manifest."
+
+    chosen="$(
+        backup_restic_match_snapshot_id \
+            "${destination_json}" \
+            "${tree_old}" \
+            "2026-10-20T18:00:00Z" \
+            "nextcloud-gr"
+    )" || fail "A unique older snapshot was not identified."
+
+    [[ "${chosen}" == "${older_id}" && "${chosen}" != "${newer_id}" ]] \
+        || fail "Metadata matching returned ${chosen} instead of the older snapshot."
+
+    status=0
+    chosen="$(
+        backup_restic_match_snapshot_id \
+            "${ambiguous_json}" \
+            "${tree_old}" \
+            "2026-10-20T18:00:00Z" \
+            "nextcloud-gr"
+    )" || status=$?
+
+    [[ "${status}" -ne 0 && "${chosen}" == "ambiguous" ]] \
+        || fail "Two matching snapshots were resolved as ${chosen}."
+
+    [[ "${chosen}" != "${newer_id}" && "${chosen}" != "${older_id}" ]] \
+        || fail "An ambiguous match returned a snapshot id."
+
+    status=0
+    chosen="$(
+        backup_select_restore_snapshot \
+            "${source_id}" "" no no ambiguous "${newer_id}"
+    )" || status=$?
+
+    [[ "${status}" -ne 0 && "${chosen}" == "ambiguous" ]] \
+        || fail "Ambiguous locator metadata selected ${chosen}."
+
+    chosen="$(
+        backup_select_restore_snapshot \
+            "${source_id}" "" no no unique "${older_id}"
+    )" || fail "A single locator match was refused."
+
+    [[ "${chosen}" == "${older_id}" && "${chosen}" != "${newer_id}" ]] \
+        || fail "A unique locator match selected ${chosen}."
+
+    chosen="$(
+        backup_select_restore_snapshot \
+            "${source_id}" "${external_id}" no yes
+    )" || fail "A new manifest with only the external id was refused."
+
+    [[ "${chosen}" == "${external_id}" ]] \
+        || fail "New manifest restore selected ${chosen}."
+
+    if backup_external_pair_complete yes ambiguous yes; then
+        fail "An ambiguous token was accepted as a verified external snapshot."
+    fi
+
+    test_fill_backup_stage "${stage}" "$(test_secret_value a)" "legacy"
+    sed -i '/^restic_external_snapshot_id=/d' "${stage}/manifest.txt"
+    grep -q '^restic_external_snapshot_id=' "${stage}/manifest.txt" \
+        && fail "The legacy manifest still names an external snapshot id."
+    restore_validate_stage "${stage}" \
+        || fail "An older manifest without restic_external_snapshot_id was refused."
+
+    rm -rf "${work}"
+
+    ok "Older manifests were checked from fixtures. restic was not run and no restore was performed."
+    if ! command -v restic >/dev/null 2>&1; then
+        log_not_performed "restore of a restic snapshot. restic is not installed. The JSON fixture is not a restic test and no restore was performed."
+    fi
+}
+
 ###############################################################################
 # age encryption of a real temporary archive
 #
