@@ -1,0 +1,68 @@
+###############################################################################
+#
+# Authentik-netcup Project
+#
+# File:
+#   compose/10-postgresql.yml
+#
+# Description:
+#   PostgreSQL for authentik application data, sessions and the
+#   embedded outpost. No host port is published.
+#
+#   Image pin: docker.io/library/postgres:16-alpine
+#   Data owner: 70:70 (Alpine postgres user in the 16/alpine3.23
+#   upstream Dockerfile).
+#
+###############################################################################
+
+services:
+
+  postgresql:
+
+    image: ${POSTGRES_IMAGE}
+
+    container_name: authentik-postgresql
+
+    hostname: authentik-postgresql
+
+    restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+
+      POSTGRES_DB: ${PG_DB}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+
+    volumes:
+
+      - ${DATA_DIR}/postgresql:/var/lib/postgresql/data
+
+    healthcheck:
+
+      test:
+        - CMD-SHELL
+        - pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
+
+      interval: 30s
+
+      timeout: 5s
+
+      retries: 5
+
+      start_period: 20s
+
+    networks:
+
+      authentik-netcup:
+        ipv4_address: ${IP_POSTGRESQL}
+
+    logging:
+
+      driver: json-file
+
+      options:
+        max-size: ${LOG_MAX_SIZE}
+        max-file: "${LOG_MAX_FILES}"
