@@ -28,18 +28,18 @@ test_backup_archive()
     archive="${work}/sample.tar.gz"
     extracted="${work}/extracted"
 
-    mkdir -p "${stage}/postgresql" "${stage}/authentik/data"
+    mkdir -p "${stage}/postgresql" "${stage}/nextcloud/config"
 
-    printf 'dump\n' > "${stage}/postgresql/authentik.dump"
-    printf 'media\n' > "${stage}/authentik/data/icon.txt"
+    printf 'PGDMP\n' > "${stage}/postgresql/nextcloud.dump"
+    printf 'media\n' > "${stage}/nextcloud/config/icon.txt"
     printf 'secret\n' > "${stage}/stack.env"
 
     backup_write_manifest \
         "${stage}" \
         "2026-10-13T00:00:00Z" \
-        "ghcr.io/goauthentik/server" \
-        "2026.8.3" \
-        "docker.io/library/postgres:16-alpine"
+        "docker.io/library/nextcloud" \
+        "35.0.2-fpm" \
+        "docker.io/library/postgres:18.6"
 
     backup_verify_tree "${stage}"
 
@@ -78,14 +78,14 @@ test_restore_confirmation()
         fail "A foreign confirmation was accepted."
     fi
 
-    restore_versions_match "2026.8.3" "2026.8.3" "no" \
+    restore_versions_match "35.0.2-fpm" "35.0.2-fpm" "no" \
         || fail "Matching Authentik tags were rejected."
 
-    if restore_versions_match "2026.8.3" "2025.10.0" "no"; then
+    if restore_versions_match "35.0.2-fpm" "33.0.10-fpm" "no"; then
         fail "A version mismatch was accepted."
     fi
 
-    restore_versions_match "2026.8.3" "2025.10.0" "yes" \
+    restore_versions_match "35.0.2-fpm" "33.0.10-fpm" "yes" \
         || fail "An explicit version mismatch was rejected."
 
     ok "Restore confirmation and version check OK."
@@ -111,8 +111,8 @@ test_secret_value()
 #
 # Arguments:
 #   $1 - Stage directory
-#   $2 - AUTHENTIK_SECRET_KEY
-#   $3 - Marker stored in authentik/data/icon.txt
+#   $2 - NEXTCLOUD_ADMIN_PASSWORD
+#   $3 - Marker stored in nextcloud/config/icon.txt
 #
 ###############################################################################
 
@@ -124,16 +124,16 @@ test_fill_backup_stage()
 
     mkdir -p \
         "${stage}/postgresql" \
-        "${stage}/authentik/data" \
-        "${stage}/authentik/templates" \
-        "${stage}/authentik/certs"
+        "${stage}/nextcloud/config" \
+        "${stage}/nextcloud/custom_apps" \
+        "${stage}/nextcloud/themes"
 
-    printf 'dump\n' > "${stage}/postgresql/authentik.dump"
-    printf '%s\n' "${marker}" > "${stage}/authentik/data/icon.txt"
-    printf 'template\n' > "${stage}/authentik/templates/custom.html"
-    printf 'cert\n' > "${stage}/authentik/certs/cert.pem"
+    printf 'PGDMP\n' > "${stage}/postgresql/nextcloud.dump"
+    printf '%s\n' "${marker}" > "${stage}/nextcloud/config/icon.txt"
+    printf 'template\n' > "${stage}/nextcloud/custom_apps/custom.html"
+    printf 'cert\n' > "${stage}/nextcloud/themes/cert.pem"
 
-    printf 'AUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_EMAIL__HOST=smtp.archived\nBACKUP_EXTERNAL_DIR=/mnt/archived\n' \
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\nSMTP_HOST=smtp.archived\nBACKUP_EXTERNAL_DIR=/mnt/archived\n' \
         "${key}" > "${stage}/stack.env"
 
     chmod 600 "${stage}/stack.env"
@@ -141,9 +141,11 @@ test_fill_backup_stage()
     backup_write_manifest \
         "${stage}" \
         "2026-10-13T00:00:00Z" \
-        "ghcr.io/goauthentik/server" \
-        "2026.8.3" \
-        "docker.io/library/postgres:16-alpine"
+        "docker.io/library/nextcloud" \
+        "35.0.2-fpm" \
+        "docker.io/library/postgres:18.6" \
+        "18" \
+        "0123456789abcdef"
 }
 
 ###############################################################################
@@ -167,13 +169,13 @@ test_restore_rejects_incomplete()
     live="${work}/live"
     env_file="${work}/runtime.env"
 
-    mkdir -p "${live}/data" "${live}/templates" "${live}/certs"
-    printf 'sentinel\n' > "${live}/data/sentinel.txt"
-    printf 'AUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_EMAIL__HOST=smtp.current\n' \
+    mkdir -p "${live}/config" "${live}/custom_apps" "${live}/themes"
+    printf 'sentinel\n' > "${live}/config/sentinel.txt"
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\nSMTP_HOST=smtp.current\n' \
         "${key}" > "${env_file}"
 
     test_fill_backup_stage "${stage}" "${key}" "archive"
-    rm -f "${stage}/postgresql/authentik.dump"
+    rm -f "${stage}/postgresql/nextcloud.dump"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
@@ -181,37 +183,37 @@ test_restore_rejects_incomplete()
         || fail "A backup without a database dump was accepted: ${rejected}"
 
     test_fill_backup_stage "${stage}" "${key}" "archive"
-    rm -rf "${stage}/authentik/templates"
+    rm -rf "${stage}/nextcloud/custom_apps"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
-    [[ "${rejected}" == *"Archive is missing authentik/templates."* ]] \
+    [[ "${rejected}" == *"Archive is missing nextcloud/custom_apps."* ]] \
         || fail "A backup without persistent directories was accepted: ${rejected}"
 
     test_fill_backup_stage "${stage}" "${key}" "archive"
-    printf 'AUTHENTIK_EMAIL__HOST=smtp.archived\n' > "${stage}/stack.env"
+    printf 'SMTP_HOST=smtp.archived\n' > "${stage}/stack.env"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
-    [[ "${rejected}" == *"no AUTHENTIK_SECRET_KEY"* ]] \
-        || fail "A backup without AUTHENTIK_SECRET_KEY was accepted: ${rejected}"
+    [[ "${rejected}" == *"no NEXTCLOUD_ADMIN_PASSWORD"* ]] \
+        || fail "A backup without NEXTCLOUD_ADMIN_PASSWORD was accepted: ${rejected}"
 
-    printf 'AUTHENTIK_SECRET_KEY=set_authentik_secret_key\n' > "${stage}/stack.env"
-
-    rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
-
-    [[ "${rejected}" == *"placeholder, or shorter than 50 characters."* ]] \
-        || fail "A placeholder AUTHENTIK_SECRET_KEY was accepted: ${rejected}"
-
-    printf 'AUTHENTIK_SECRET_KEY=short-key\n' > "${stage}/stack.env"
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=set_authentik_secret_key\n' > "${stage}/stack.env"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
-    [[ "${rejected}" == *"placeholder, or shorter than 50 characters."* ]] \
-        || fail "A short AUTHENTIK_SECRET_KEY was accepted: ${rejected}"
+    [[ "${rejected}" == *"placeholder, or shorter than 16 characters."* ]] \
+        || fail "A placeholder NEXTCLOUD_ADMIN_PASSWORD was accepted: ${rejected}"
+
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=short-key\n' > "${stage}/stack.env"
+
+    rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
+
+    [[ "${rejected}" == *"placeholder, or shorter than 16 characters."* ]] \
+        || fail "A short NEXTCLOUD_ADMIN_PASSWORD was accepted: ${rejected}"
 
     test_fill_backup_stage "${stage}" "${key}" "archive"
-    printf 'changed\n' >> "${stage}/authentik/data/icon.txt"
+    printf 'changed\n' >> "${stage}/nextcloud/config/icon.txt"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
@@ -235,7 +237,7 @@ test_restore_rejects_incomplete()
         return 0
     }
 
-    rm -f "${stage}/postgresql/authentik.dump"
+    rm -f "${stage}/postgresql/nextcloud.dump"
 
     rejected="$(restore_perform "${stage}" "${live}" "${env_file}" "${work}/rollback" 2>&1)" || true
 
@@ -245,7 +247,7 @@ test_restore_rejects_incomplete()
     [[ ! -e "${TEST_SNAPSHOT_FLAG}" ]] \
         || fail "Validation failure still prepared a database snapshot."
 
-    [[ "$(cat "${live}/data/sentinel.txt")" == "sentinel" ]] \
+    [[ "$(cat "${live}/config/sentinel.txt")" == "sentinel" ]] \
         || fail "Validation failure changed live files."
 
     rm -rf "${work}"
@@ -278,12 +280,12 @@ test_restore_rolls_back()
     env_file="${work}/runtime.env"
     rollback="${work}/rollback"
 
-    mkdir -p "${live}/data" "${live}/templates" "${live}/certs" "${rollback}"
-    printf 'original\n' > "${live}/data/icon.txt"
-    printf 'original-template\n' > "${live}/templates/custom.html"
-    printf 'original-cert\n' > "${live}/certs/cert.pem"
+    mkdir -p "${live}/config" "${live}/custom_apps" "${live}/themes" "${rollback}"
+    printf 'original\n' > "${live}/config/icon.txt"
+    printf 'original-template\n' > "${live}/custom_apps/custom.html"
+    printf 'original-cert\n' > "${live}/themes/cert.pem"
 
-    printf 'AUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_EMAIL__HOST=smtp.current\nBACKUP_EXTERNAL_DIR=/mnt/current\n' \
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\nSMTP_HOST=smtp.current\nBACKUP_EXTERNAL_DIR=/mnt/current\n' \
         "${old_key}" > "${env_file}"
 
     test_fill_backup_stage "${stage}" "${new_key}" "from-archive"
@@ -333,7 +335,7 @@ test_restore_rolls_back()
     restore_should_keep_rollback \
         || fail "A rolled-back restore would discard its snapshot."
 
-    [[ "$(cat "${live}/data/icon.txt")" == "original" ]] \
+    [[ "$(cat "${live}/config/icon.txt")" == "original" ]] \
         || fail "Rollback left archive files in place of the original data."
 
     live_key="$(restore_read_secret_key "${env_file}")"
@@ -341,10 +343,10 @@ test_restore_rolls_back()
     [[ "${live_key}" == "${old_key}" ]] \
         || fail "Rollback did not restore the previous secret key."
 
-    grep -qx 'AUTHENTIK_EMAIL__HOST=smtp.current' "${env_file}" \
+    grep -qx 'SMTP_HOST=smtp.current' "${env_file}" \
         || fail "Rollback changed a non-key environment line."
 
-    [[ -s "${rollback}/postgresql/authentik.dump" ]] \
+    [[ -s "${rollback}/postgresql/nextcloud.dump" ]] \
         || fail "Rollback snapshot dump is missing."
 
     TEST_LOAD_MODE="fail"
@@ -356,7 +358,7 @@ test_restore_rolls_back()
     [[ "${RESTORE_ERROR}" == "rollback-failed" ]] \
         || fail "A failed rollback was not reported (${RESTORE_ERROR})."
 
-    [[ "$(cat "${live}/data/icon.txt")" == "original" ]] \
+    [[ "$(cat "${live}/config/icon.txt")" == "original" ]] \
         || fail "A failed database rollback left archive files in place."
 
     live_key="$(restore_read_secret_key "${env_file}")"
@@ -398,12 +400,12 @@ test_restore_installs_secret_key()
     env_file="${work}/runtime.env"
     rollback="${work}/rollback"
 
-    mkdir -p "${live}/data" "${live}/templates" "${live}/certs" "${rollback}"
-    printf 'original\n' > "${live}/data/icon.txt"
-    printf 'original-template\n' > "${live}/templates/custom.html"
-    printf 'original-cert\n' > "${live}/certs/cert.pem"
+    mkdir -p "${live}/config" "${live}/custom_apps" "${live}/themes" "${rollback}"
+    printf 'original\n' > "${live}/config/icon.txt"
+    printf 'original-template\n' > "${live}/custom_apps/custom.html"
+    printf 'original-cert\n' > "${live}/themes/cert.pem"
 
-    printf 'AUTHENTIK_SECRET_KEY=%s\nAUTHENTIK_EMAIL__HOST=smtp.current\nBACKUP_EXTERNAL_DIR=/mnt/current\n' \
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\nSMTP_HOST=smtp.current\nBACKUP_EXTERNAL_DIR=/mnt/current\n' \
         "${old_key}" > "${env_file}"
 
     chmod 640 "${env_file}"
@@ -437,16 +439,16 @@ test_restore_installs_secret_key()
     [[ "${live_key}" == "${new_key}" ]] \
         || fail "Runtime secret key does not match the archive."
 
-    grep -qx 'AUTHENTIK_EMAIL__HOST=smtp.current' "${env_file}" \
-        || fail "Secret key restore rewrote AUTHENTIK_EMAIL__HOST."
+    grep -qx 'SMTP_HOST=smtp.current' "${env_file}" \
+        || fail "Secret key restore rewrote SMTP_HOST."
 
     grep -qx 'BACKUP_EXTERNAL_DIR=/mnt/current' "${env_file}" \
         || fail "Secret key restore rewrote BACKUP_EXTERNAL_DIR."
 
-    [[ "$(grep -c '^AUTHENTIK_SECRET_KEY=' "${env_file}")" -eq 1 ]] \
+    [[ "$(grep -c '^NEXTCLOUD_ADMIN_PASSWORD=' "${env_file}")" -eq 1 ]] \
         || fail "Secret key restore left more than one key line."
 
-    [[ "$(cat "${live}/data/icon.txt")" == "from-archive" ]] \
+    [[ "$(cat "${live}/config/icon.txt")" == "from-archive" ]] \
         || fail "Restored data file does not match the archive."
 
     mode="$(stat -c '%a' "${env_file}")"
@@ -532,7 +534,7 @@ test_backup_quiesce()
     (
         docker_container_running()
         {
-            [[ "$1" == "${AUTHENTIK_SERVER_CONTAINER}" ]]
+            [[ "$1" == "${NEXTCLOUD_CRON_CONTAINER}" ]]
         }
 
         backup_stop_container()
@@ -545,18 +547,34 @@ test_backup_quiesce()
             printf 'start %s\n' "$1" >> "${events}"
         }
 
+        backup_enter_maintenance()
+        {
+            printf 'maintenance on\n' >> "${events}"
+        }
+
+        backup_leave_maintenance()
+        {
+            printf 'maintenance off\n' >> "${events}"
+        }
+
         backup_quiesce_writers
         backup_resume_writers
     ) || fail "Backup quiesce returned an error."
 
-    grep -qx "stop ${AUTHENTIK_SERVER_CONTAINER}" "${events}" \
-        || fail "A running Authentik server was not stopped for the backup."
+    grep -qx "maintenance on" "${events}" \
+        || fail "Backup did not enable maintenance mode."
 
-    grep -qx "start ${AUTHENTIK_SERVER_CONTAINER}" "${events}" \
-        || fail "The Authentik server stopped for the backup was not started again."
+    grep -qx "stop ${NEXTCLOUD_CRON_CONTAINER}" "${events}" \
+        || fail "A running cron container was not stopped for the backup."
 
-    if grep -q "${AUTHENTIK_WORKER_CONTAINER}" "${events}"; then
-        fail "An already stopped worker was changed by the backup."
+    grep -qx "start ${NEXTCLOUD_CRON_CONTAINER}" "${events}" \
+        || fail "Cron stopped for the backup was not started again."
+
+    grep -qx "maintenance off" "${events}" \
+        || fail "Backup did not leave maintenance mode."
+
+    if grep -q "${NEXTCLOUD_APP_CONTAINER}\|${NGINX_CONTAINER}" "${events}"; then
+        fail "Backup changed Nextcloud or Nginx."
     fi
 
     rm -rf "${work}"
@@ -753,11 +771,11 @@ test_backup_plaintext_modes()
             || fail "The mode fixture was not 644: ${mode}"
 
         backup_create_private_dir "${stage}/postgresql"
-        backup_create_private_file "${stage}/postgresql/authentik.dump"
-        printf 'dump\n' > "${stage}/postgresql/authentik.dump"
+        backup_create_private_file "${stage}/postgresql/nextcloud.dump"
+        printf 'PGDMP\n' > "${stage}/postgresql/nextcloud.dump"
 
-        backup_copy_private_tree "${work}/live" "${stage}/authentik/data"
-        printf 'AUTHENTIK_SECRET_KEY=mode-check\n' > "${work}/runtime.env"
+        backup_copy_private_tree "${work}/live" "${stage}/nextcloud/config"
+        printf 'NEXTCLOUD_ADMIN_PASSWORD=mode-check\n' > "${work}/runtime.env"
         install -m 600 "${work}/runtime.env" "${stage}/stack.env"
 
         backup_write_manifest \
@@ -771,8 +789,8 @@ test_backup_plaintext_modes()
             || fail "The stage tree was not mode 700/600 under umask 022."
 
         for relative in \
-            postgresql/authentik.dump \
-            authentik/data/nested/icon.txt \
+            postgresql/nextcloud.dump \
+            nextcloud/config/nested/icon.txt \
             stack.env \
             manifest.txt
         do
@@ -781,7 +799,7 @@ test_backup_plaintext_modes()
                 || fail "${relative} was created mode ${mode}, expected 600."
         done
 
-        mode="$(stat -c '%a' "${stage}/authentik")"
+        mode="$(stat -c '%a' "${stage}/nextcloud")"
         [[ "${mode}" == "700" ]] \
             || fail "An intermediate stage directory was mode ${mode}, expected 700."
 
@@ -813,7 +831,7 @@ test_backup_plaintext_modes()
         [[ "${mode}" == "600" ]] \
             || fail "Unpacked stack.env was mode ${mode}, expected 600."
 
-        mode="$(stat -c '%a' "${verify}/postgresql/authentik.dump")"
+        mode="$(stat -c '%a' "${verify}/postgresql/nextcloud.dump")"
         [[ "${mode}" == "600" ]] \
             || fail "Unpacked dump was mode ${mode}, expected 600."
 
@@ -1306,19 +1324,19 @@ test_restore_signal()
     rollback="${work}/rollback"
     env_file="${work}/runtime.env"
 
-    mkdir -m 700 -p "${live}/data" "${live}/templates" "${live}/certs"
-    mkdir -m 700 -p "${rollback}/authentik/data" "${rollback}/authentik/templates" "${rollback}/authentik/certs" "${rollback}/postgresql"
+    mkdir -m 700 -p "${live}/config" "${live}/custom_apps" "${live}/themes"
+    mkdir -m 700 -p "${rollback}/nextcloud/config" "${rollback}/nextcloud/custom_apps" "${rollback}/nextcloud/themes" "${rollback}/postgresql"
 
-    printf 'original\n' > "${live}/data/icon.txt"
-    printf 'original\n' > "${rollback}/authentik/data/icon.txt"
-    printf 'template\n' > "${live}/templates/custom.html"
-    printf 'template\n' > "${rollback}/authentik/templates/custom.html"
-    printf 'cert\n' > "${live}/certs/cert.pem"
-    printf 'cert\n' > "${rollback}/authentik/certs/cert.pem"
-    printf 'AUTHENTIK_SECRET_KEY=%s\n' "$(test_secret_value a)" > "${env_file}"
+    printf 'original\n' > "${live}/config/icon.txt"
+    printf 'original\n' > "${rollback}/nextcloud/config/icon.txt"
+    printf 'template\n' > "${live}/custom_apps/custom.html"
+    printf 'template\n' > "${rollback}/nextcloud/custom_apps/custom.html"
+    printf 'cert\n' > "${live}/themes/cert.pem"
+    printf 'cert\n' > "${rollback}/nextcloud/themes/cert.pem"
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\n' "$(test_secret_value a)" > "${env_file}"
     install -m 600 "${env_file}" "${rollback}/runtime.env"
     printf '600\n' > "${rollback}/env.mode"
-    printf 'snapshot\n' > "${rollback}/postgresql/authentik.dump"
+    printf 'snapshot\n' > "${rollback}/postgresql/nextcloud.dump"
 
     status=0
 
@@ -1339,7 +1357,7 @@ test_restore_signal()
             return 0
         }
 
-        printf 'destroyed\n' > "${live}/data/icon.txt"
+        printf 'destroyed\n' > "${live}/config/icon.txt"
 
         trap 'restore_on_exit' EXIT
         trap 'exit 143' TERM
@@ -1353,7 +1371,7 @@ test_restore_signal()
     [[ -d "${rollback}" ]] \
         || fail "SIGTERM removed the rollback snapshot."
 
-    [[ "$(cat "${live}/data/icon.txt")" == "original" ]] \
+    [[ "$(cat "${live}/config/icon.txt")" == "original" ]] \
         || fail "SIGTERM left the destructive file change in place."
 
     rm -rf "${work}"

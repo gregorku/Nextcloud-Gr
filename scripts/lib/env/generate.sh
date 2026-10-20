@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
 # File:
 #   scripts/lib/env/generate.sh
@@ -10,17 +10,11 @@
 # Description:
 #   Generate secrets for policy "generated".
 #
-#   The commands match the authentik Docker Compose installation
-#   documentation:
-#
-#     PG_PASS               openssl rand -base64 36
-#     AUTHENTIK_SECRET_KEY  openssl rand -base64 60
+#   A generated value is written only into the runtime .env. It is not
+#   printed and it is not written back to .env.example.
 #
 #   PostgreSQL rejects passwords longer than 99 characters. base64 of
 #   36 bytes is 48 characters, without the trailing newline.
-#
-#   A generated value is written only into the runtime .env. It is not
-#   printed and it is not written back to .env.example.
 #
 ###############################################################################
 
@@ -62,12 +56,12 @@ env_generate_secret_for()
 
     case "${key}" in
 
-        PG_PASS)
+        PG_PASS|REDIS_PASSWORD|RESTIC_PASSWORD)
             env_generate_secret 36
             ;;
 
-        AUTHENTIK_SECRET_KEY)
-            env_generate_secret 60
+        NEXTCLOUD_ADMIN_PASSWORD)
+            env_generate_secret 24
             ;;
 
         *)

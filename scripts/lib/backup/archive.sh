@@ -23,9 +23,11 @@
 # Arguments:
 #   $1 - Stage directory
 #   $2 - UTC timestamp
-#   $3 - Authentik image
-#   $4 - Authentik tag
+#   $3 - Nextcloud image
+#   $4 - Nextcloud tag
 #   $5 - PostgreSQL image
+#   $6 - PostgreSQL major
+#   $7 - Restic snapshot id
 #
 ###############################################################################
 
@@ -33,9 +35,11 @@ backup_write_manifest()
 {
     local stage="$1"
     local created_at="$2"
-    local authentik_image="$3"
-    local authentik_tag="$4"
+    local nextcloud_image="$3"
+    local nextcloud_tag="$4"
     local postgres_image="$5"
+    local postgres_major="${6:-${POSTGRES_MAJOR}}"
+    local restic_snapshot_id="${7:-}"
     local manifest="${stage}/manifest.txt"
     local path
     local hash
@@ -49,11 +53,15 @@ backup_write_manifest()
     {
         printf 'project=%s\n' "${PROJECT_NAME}"
         printf 'created_at=%s\n' "${created_at}"
-        printf 'authentik_image=%s\n' "${authentik_image}"
-        printf 'authentik_tag=%s\n' "${authentik_tag}"
+        printf 'nextcloud_image=%s\n' "${nextcloud_image}"
+        printf 'nextcloud_tag=%s\n' "${nextcloud_tag}"
         printf 'postgres_image=%s\n' "${postgres_image}"
+        printf 'postgres_major=%s\n' "${postgres_major}"
         printf 'database_format=custom\n'
-        printf 'database_file=postgresql/authentik.dump\n'
+        printf 'database_engine=postgresql\n'
+        printf 'database_file=postgresql/nextcloud.dump\n'
+        printf 'restic_snapshot_id=%s\n' "${restic_snapshot_id}"
+        printf 'data_backup=restic\n'
     } > "${manifest}"
 
     while IFS= read -r -d '' path

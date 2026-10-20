@@ -2,16 +2,14 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
 # File:
 #   scripts/lib/tests/static.sh
 #
 # Description:
 #   Checks that read the Git checkout and temporary directories.
-#
-#   They do not require root, Docker, or the Incus container, and they
-#   do not write to /docker-data.
+#   They do not write to /docker-data and they do not start Compose.
 #
 ###############################################################################
 
@@ -30,23 +28,30 @@ test_repository_layout()
 
     require_file "${root}/compose/00-networks.yml"
     require_file "${root}/compose/10-postgresql.yml"
-    require_file "${root}/compose/20-authentik-server.yml"
-    require_file "${root}/compose/30-authentik-worker.yml"
-    require_file "${root}/configs/authentik/README.md"
+    require_file "${root}/compose/20-redis.yml"
+    require_file "${root}/compose/30-nextcloud-fpm.yml"
+    require_file "${root}/compose/40-nginx.yml"
+    require_file "${root}/compose/50-cron.yml"
+    require_file "${root}/configs/nginx/nginx.conf"
+    require_file "${root}/scripts/upgrade.sh"
+    require_file "${root}/docs/migration-from-current.md"
+    require_file "${root}/docs/upgrade.md"
 
-    [[ ! -e "${root}/compose/50-grafana.yml" ]] \
-        || fail "Grafana Compose file is still present."
+    [[ ! -e "${root}/compose/20-authentik-server.yml" ]] \
+        || fail "Authentik server Compose file is still present."
 
-    [[ ! -e "${root}/scripts/lib/deploy/sync.sh" ]] \
-        || fail "Duplicate sync implementation is still present."
+    [[ ! -e "${root}/compose/30-authentik-worker.yml" ]] \
+        || fail "Authentik worker Compose file is still present."
 
-    [[ ! -e "${root}/scripts/lib/sync.sh" ]] \
-        || fail "Duplicate sync implementation is still present."
+    [[ ! -e "${root}/scripts/install-dockge.sh" ]] \
+        || fail "Dockge installer is still present."
 
-    if grep -E -n 'docker[[:space:]]+(rm|stop)' \
-        "${root}/scripts/install-dockge.sh" \
-        "${root}/scripts/lib/deploy/dockge.sh"; then
-        fail "Dockge install or deploy still stops or removes the container."
+    [[ ! -e "${root}/scripts/lib/init/authentik.sh" ]] \
+        || fail "Authentik init module is still present."
+
+    if grep -R -n -E 'traefik|caddy|/var/run/docker\.sock' \
+        "${root}/compose" "${root}/compose.yml"; then
+        fail "Compose references Traefik, Caddy or the Docker socket."
     fi
 
     ok "Repository layout OK."
@@ -62,24 +67,23 @@ test_env_example()
 
     env_validate_file "${root}/.env.example" example
 
-    local example_host
-    local example_port
+    local domain
+    local tag
 
-    example_host="$(
-        awk -F= '$1 == "AUTHENTIK_HOST_IP" { print substr($0, index($0, "=") + 1); exit }' \
+    domain="$(
+        awk -F= '$1 == "NEXTCLOUD_DOMAIN" { print substr($0, index($0, "=") + 1); exit }' \
+            "${root}/.env.example"
+    )"
+    tag="$(
+        awk -F= '$1 == "NEXTCLOUD_TAG" { print substr($0, index($0, "=") + 1); exit }' \
             "${root}/.env.example"
     )"
 
-    example_port="$(
-        awk -F= '$1 == "AUTHENTIK_HTTP_PORT" { print substr($0, index($0, "=") + 1); exit }' \
-            "${root}/.env.example"
-    )"
+    [[ "${domain}" == "${NEXTCLOUD_DOMAIN}" ]] \
+        || fail ".env.example domain does not match config.sh."
 
-    [[ "${example_host}" == "${AUTHENTIK_HOST_IP}" ]] \
-        || fail ".env.example host does not match config.sh."
-
-    [[ "${example_port}" == "${AUTHENTIK_HTTP_PORT}" ]] \
-        || fail ".env.example port does not match config.sh."
+    [[ "${tag}" == "35.0.2-fpm" ]] \
+        || fail ".env.example Nextcloud tag is ${tag}."
 
     ok ".env.example matches the variable policy."
 }
@@ -91,26 +95,13 @@ test_runtime_placeholder_rejection()
     local root
     local work
     local runtime
+    local message
 
     root="$(cd "${SCRIPT_DIR}/.." && pwd)"
     work="$(mktemp -d)"
     runtime="${work}/.env"
 
     cp "${root}/.env.example" "${runtime}"
-
-    #
-    # The example is valid as an example and invalid as a deployment
-    # file because of the set_* placeholders.
-    #
-
-    #
-    # fail() exits. Run the check in a command substitution so a
-    # rejected file does not abort this script, then require the
-    # placeholder message. ENV_FILE is readonly in config.sh and must
-    # not be assigned here.
-    #
-
-    local message
 
     message="$(env_validate_file "${runtime}" runtime 2>&1)" || true
 
@@ -133,35 +124,63 @@ test_compose_bindings()
     grep -q 'external: true' "${root}/compose/00-networks.yml" \
         || fail "Docker network is not external."
 
-    grep -Fq '"${AUTHENTIK_HOST_IP}:${AUTHENTIK_HTTP_PORT}:9000"' \
-        "${root}/compose/20-authentik-server.yml" \
-        || fail "HTTP port is not bound to the Incus address."
+    grep -Fq '${POSTGRESQL_HOST_DIR}:/var/lib/postgresql' \
+        "${root}/compose/10-postgresql.yml" \
+        || fail "PostgreSQL is not mounted at /var/lib/postgresql."
 
-    if grep -Eq '^[[:space:]]*ports:' "${root}/compose/10-postgresql.yml"; then
-        fail "PostgreSQL Compose file publishes ports."
+    if grep -Eq '^[[:space:]]*- .*:/var/lib/postgresql/data([[:space:]]|$)' \
+        "${root}/compose/10-postgresql.yml"; then
+        fail "PostgreSQL still uses the pre-18 data mount."
     fi
 
-    if grep -R -n -E '9443:9443|5432:5432|6379:6379|/var/run/docker\.sock' \
+    if grep -Eq '^[[:space:]]*ports:' "${root}/compose/10-postgresql.yml" \
+        "${root}/compose/20-redis.yml" \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        "${root}/compose/50-cron.yml"; then
+        fail "A non-Nginx service publishes a host port."
+    fi
+
+    grep -Fq '"${NEXTCLOUD_BACKEND_BIND}:${NEXTCLOUD_BACKEND_PORT}:80"' \
+        "${root}/compose/40-nginx.yml" \
+        || fail "Nginx is not bound to the configured private address."
+
+    if grep -R -n -E '0\.0\.0\.0:|5432:5432|6379:6379|9000:9000' \
         "${root}/compose" "${root}/compose.yml"; then
-        fail "Compose publishes a forbidden port or mounts the Docker socket."
+        fail "Compose publishes a forbidden address or port."
     fi
 
-    if grep -R -n -E 'image:.*redis|container_name:.*redis' \
-        "${root}/compose" "${root}/compose.yml"; then
-        fail "Redis is still defined by Compose."
+    if grep -R -n -E ':latest|:stable-fpm|:stable|:production' \
+        "${root}/.env.example" "${root}/compose" "${root}/compose.yml"; then
+        fail "A floating image tag is present."
     fi
 
-    ok "Compose bindings match the Authentik stack."
+    for needle in carddav caldav webfinger nodeinfo remote.php client_max_body_size
+    do
+        grep -q "${needle}" "${root}/configs/nginx/nginx.conf" \
+            || fail "Nginx config is missing ${needle}."
+    done
+
+    if grep -q 'listen 443' "${root}/configs/nginx/nginx.conf"; then
+        fail "Nginx config listens for TLS."
+    fi
+
+    ok "Compose bindings match the Nextcloud stack."
 
     if command -v docker >/dev/null 2>&1 \
         && docker compose version >/dev/null 2>&1; then
 
+        local work
+        work="$(mktemp -d)"
+        cp "${root}/.env.example" "${work}/.env"
+        sed -i 's/^NEXTCLOUD_BACKEND_BIND=.*/NEXTCLOUD_BACKEND_BIND=192.0.2.10/' "${work}/.env"
+
         docker compose \
-            --env-file "${root}/.env.example" \
+            --env-file "${work}/.env" \
             -f "${root}/compose.yml" \
             config >/dev/null \
             || fail "docker compose config failed."
 
+        rm -rf "${work}"
         ok "docker compose config accepted the project."
     else
         warn "Docker Compose CLI is not available. docker compose config was not executed."
@@ -173,6 +192,17 @@ test_sync_guards()
     print_section "Sync guards"
 
     assert_sync_paths
+
+    local item
+
+    for item in "${DEPLOY_ITEMS[@]}"
+    do
+        case "${item}" in
+            *postgresql*|*html*|*backup*|*.env)
+                fail "DEPLOY_ITEMS includes a persistent path: ${item}"
+                ;;
+        esac
+    done
 
     local work
     local git_dir
@@ -224,4 +254,31 @@ test_sync_guards()
     rm -rf "${work}"
 
     ok "Sync guards keep .env and refuse paths outside the stack."
+}
+
+test_script_modes()
+{
+    print_section "Script modes"
+
+    local root
+    local script
+    local mode
+    local indexed
+
+    root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+    while IFS= read -r -d '' script
+    do
+        mode="$(stat -c '%a' "${script}")"
+        [[ "${mode}" == "755" ]] \
+            || fail "Script mode is ${mode}, expected 755: ${script}"
+
+        indexed="$(git -C "${root}" ls-files -s -- "${script#"${root}/"}" || true)"
+        if [[ -n "${indexed}" ]]; then
+            [[ "${indexed}" == 100755* ]] \
+                || fail "Git index mode is not 100755: ${indexed}"
+        fi
+    done < <(find "${root}/scripts" "${root}/configs" -name '*.sh' -print0)
+
+    ok "Shell scripts are mode 755."
 }

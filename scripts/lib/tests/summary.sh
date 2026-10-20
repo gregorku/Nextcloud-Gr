@@ -20,7 +20,7 @@ test_summary()
 {
     print_section "Finished"
 
-    ok "Authentik-netcup tests completed."
+    ok "Nextcloud-Gr tests completed."
 
     echo
 

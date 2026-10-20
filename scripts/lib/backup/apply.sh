@@ -150,13 +150,13 @@ restore_tree_covers()
 
     local name
 
-    for name in data templates certs
+    for name in config custom_apps themes
     do
         [[ -d "${source}/${name}" ]] || return 1
         [[ -d "${target}/${name}" ]] || return 1
     done
 
-    for name in data templates certs
+    for name in config custom_apps themes
     do
         while IFS= read -r -d '' path
         do
@@ -225,21 +225,21 @@ restore_replace_files()
     local source="$1"
     local root="$2"
 
-    restore_replace_tree "${source}/data" "${root}/data" || return 1
-    restore_replace_tree "${source}/templates" "${root}/templates" || return 1
-    restore_replace_tree "${source}/certs" "${root}/certs" || return 1
+    restore_replace_tree "${source}/config" "${root}/config" || return 1
+    restore_replace_tree "${source}/custom_apps" "${root}/custom_apps" || return 1
+    restore_replace_tree "${source}/themes" "${root}/themes" || return 1
 
     if [[ "$(id -u)" -eq 0 ]]; then
-        chown -R "${AUTHENTIK_UID_GID}" \
-            "${root}/data" \
-            "${root}/templates" \
-            "${root}/certs" \
+        chown -R "${NEXTCLOUD_UID_GID}" \
+            "${root}/config" \
+            "${root}/custom_apps" \
+            "${root}/themes" \
             || return 1
     fi
 }
 
 ###############################################################################
-# Replace only AUTHENTIK_SECRET_KEY in a runtime env file
+# Replace only NEXTCLOUD_ADMIN_PASSWORD in a runtime env file
 #
 # Arguments:
 #   $1 - Runtime .env
@@ -261,7 +261,7 @@ restore_install_secret_key()
     [[ -f "${env_file}" ]] || return 1
     [[ -n "${key}" ]] || return 1
 
-    if ! grep -q '^AUTHENTIK_SECRET_KEY=' "${env_file}"; then
+    if ! grep -q '^NEXTCLOUD_ADMIN_PASSWORD=' "${env_file}"; then
         return 1
     fi
 
@@ -272,10 +272,10 @@ restore_install_secret_key()
     install -m 600 "${env_file}" "${backup}" || return 1
     backup_create_private_file "${tmp}" || return 1
 
-    if ! AUTHENTIK_RESTORE_KEY="${key}" awk '
+    if ! NEXTCLOUD_RESTORE_ADMIN_PASSWORD="${key}" awk '
         BEGIN { found = 0 }
-        /^AUTHENTIK_SECRET_KEY=/ {
-            print "AUTHENTIK_SECRET_KEY=" ENVIRON["AUTHENTIK_RESTORE_KEY"]
+        /^NEXTCLOUD_ADMIN_PASSWORD=/ {
+            print "NEXTCLOUD_ADMIN_PASSWORD=" ENVIRON["NEXTCLOUD_RESTORE_ADMIN_PASSWORD"]
             found = 1
             next
         }
@@ -313,24 +313,24 @@ restore_capture_rollback()
     local root="$2"
     local env_file="$3"
 
-    backup_create_private_dir "${rollback}/authentik" || return 1
+    backup_create_private_dir "${rollback}/nextcloud" || return 1
     backup_create_private_dir "${rollback}/postgresql" || return 1
 
-    restore_replace_tree "${root}/data" "${rollback}/authentik/data" || return 1
-    restore_replace_tree "${root}/templates" "${rollback}/authentik/templates" || return 1
-    restore_replace_tree "${root}/certs" "${rollback}/authentik/certs" || return 1
+    restore_replace_tree "${root}/config" "${rollback}/nextcloud/config" || return 1
+    restore_replace_tree "${root}/custom_apps" "${rollback}/nextcloud/custom_apps" || return 1
+    restore_replace_tree "${root}/themes" "${rollback}/nextcloud/themes" || return 1
 
     install -m 600 "${env_file}" "${rollback}/runtime.env" || return 1
 
     backup_create_private_file "${rollback}/env.mode" || return 1
     stat -c '%a' "${env_file}" > "${rollback}/env.mode" || return 1
 
-    restore_snapshot_database "${rollback}/postgresql/authentik.dump" || return 1
+    restore_snapshot_database "${rollback}/postgresql/nextcloud.dump" || return 1
 
-    [[ -s "${rollback}/postgresql/authentik.dump" ]] || return 1
+    [[ -s "${rollback}/postgresql/nextcloud.dump" ]] || return 1
     [[ -s "${rollback}/env.mode" ]] || return 1
 
-    restore_trees_match "${root}" "${rollback}/authentik" || return 1
+    restore_trees_match "${root}" "${rollback}/nextcloud" || return 1
 
     local snap_hash
     local live_hash
@@ -359,11 +359,11 @@ restore_apply_rollback()
     local mode
     local tmp
 
-    [[ -s "${rollback}/postgresql/authentik.dump" ]] || return 1
+    [[ -s "${rollback}/postgresql/nextcloud.dump" ]] || return 1
     [[ -f "${rollback}/runtime.env" ]] || return 1
     [[ -s "${rollback}/env.mode" ]] || return 1
 
-    restore_replace_files "${rollback}/authentik" "${root}" || return 1
+    restore_replace_files "${rollback}/nextcloud" "${root}" || return 1
 
     mode="$(tr -d '[:space:]' < "${rollback}/env.mode")" || return 1
     tmp="${env_file}.tmp"
@@ -379,7 +379,7 @@ restore_apply_rollback()
         return 1
     }
 
-    restore_load_database "${rollback}/postgresql/authentik.dump"
+    restore_load_database "${rollback}/postgresql/nextcloud.dump"
 }
 
 ###############################################################################
@@ -399,14 +399,22 @@ restore_apply_stage()
     local env_file="$3"
     local key
 
-    restore_replace_files "${stage}/authentik" "${root}" || return 1
+    restore_replace_files "${stage}/nextcloud" "${root}" || return 1
 
     key="$(restore_read_secret_key "${stage}/stack.env")" || return 1
     restore_secret_is_usable "${key}" || return 1
     restore_install_secret_key "${env_file}" "${key}" || return 1
     unset key
 
-    restore_load_database "${stage}/postgresql/authentik.dump"
+    restore_load_database "${stage}/postgresql/nextcloud.dump" || return 1
+
+    if [[ "${RESTORE_SKIP_USER_DATA:-no}" == "yes" ]]; then
+        return 0
+    fi
+
+    local snapshot
+    snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_snapshot_id)" || return 1
+    backup_restic_restore_dir "${snapshot}" "$(env_get NEXTCLOUD_DATA_HOST_DIR)"
 }
 
 ###############################################################################
@@ -427,7 +435,7 @@ restore_verify_applied()
     local archive_key
     local live_key
 
-    restore_trees_match "${stage}/authentik" "${root}" || return 1
+    restore_trees_match "${stage}/nextcloud" "${root}" || return 1
 
     archive_key="$(restore_read_secret_key "${stage}/stack.env")" || return 1
     live_key="$(restore_read_secret_key "${env_file}")" || return 1
@@ -562,8 +570,8 @@ restore_perform()
     [[ -f "${env_file}" ]] \
         || fail "Runtime .env was not found. Live data was not changed."
 
-    if ! grep -q '^AUTHENTIK_SECRET_KEY=' "${env_file}"; then
-        fail "Runtime .env has no AUTHENTIK_SECRET_KEY line. Live data was not changed."
+    if ! grep -q '^NEXTCLOUD_ADMIN_PASSWORD=' "${env_file}"; then
+        fail "Runtime .env has no NEXTCLOUD_ADMIN_PASSWORD line. Live data was not changed."
     fi
 
     RESTORE_LIVE_ROOT="${root}"

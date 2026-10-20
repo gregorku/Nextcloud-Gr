@@ -19,8 +19,8 @@ test_backend_security()
     local host
     local port
 
-    host="$(env_get AUTHENTIK_HOST_IP)"
-    port="$(env_get AUTHENTIK_HTTP_PORT)"
+    host="$(env_get NEXTCLOUD_BACKEND_BIND)"
+    port="$(env_get NEXTCLOUD_BACKEND_PORT)"
 
     docker ps --format '{{.Ports}}' \
         | grep -Eq "(^|, )${host}:${port}->" \

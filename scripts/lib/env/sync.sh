@@ -129,9 +129,8 @@ env_sync()
 
                 #
                 # Keep a real secret. Replace only a missing value or a
-                # set_* placeholder. Do not rotate a key that is already
-                # in use: Authentik invalidates sessions when
-                # AUTHENTIK_SECRET_KEY changes.
+                # set_* placeholder. Do not rotate a password that is
+                # already in use.
                 #
 
                 if [[ -n "${current_value}" ]] \

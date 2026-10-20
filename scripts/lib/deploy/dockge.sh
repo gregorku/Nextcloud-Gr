@@ -42,5 +42,5 @@ deploy_dockge()
     ok "Dockge is using ${STACKS_DIR}."
 
     info "Stack directory: ${STACK_DIR}"
-    info "Dockge shows Authentik after compose.yml exists in that directory."
+    info "Dockge shows nextcloud-gr after compose.yml exists in that directory."
 }

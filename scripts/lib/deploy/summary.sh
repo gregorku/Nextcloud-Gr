@@ -18,16 +18,16 @@ deploy_summary()
 
     info "Repository : ${GIT_DIR}"
     info "Stack      : ${STACK_DIR}"
-    info "Data       : ${DATA_DIR}"
-    info "Backend    : http://${AUTHENTIK_HOST_IP}:${AUTHENTIK_HTTP_PORT}"
+    info "HTML       : ${NEXTCLOUD_HTML_DIR}"
+    info "Backend    : http://$(env_get NEXTCLOUD_BACKEND_BIND):$(env_get NEXTCLOUD_BACKEND_PORT)"
 
     echo
 
     info "Next steps:"
-    info "1. Open Dockge and confirm the authentik-netcup stack is listed."
+    info "1. Open Dockge and confirm the nextcloud-gr stack is listed."
     info "2. Run ./scripts/post-deploy.sh"
     info "3. Run ./scripts/test.sh"
-    info "4. Point Infrastructure-netcup Traefik at http://${AUTHENTIK_HOST_IP}:${AUTHENTIK_HTTP_PORT}"
+    info "4. Point Infrastructure-netcup Traefik at the backend URL above."
 
     ok "Deployment summary completed."
 }
