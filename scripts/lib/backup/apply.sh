@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/backup/apply.sh
@@ -131,7 +131,7 @@ restore_database_is_ready()
 }
 
 ###############################################################################
-# Compare two Authentik data trees by checksum
+# Compare two Nextcloud data trees by checksum
 #
 # Arguments:
 #   $1 - Directory that contains data, templates and certs
@@ -216,7 +216,7 @@ restore_replace_tree()
 #
 # Arguments:
 #   $1 - Directory that contains data, templates and certs
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #
 ###############################################################################
 
@@ -302,7 +302,7 @@ restore_install_secret_key()
 #
 # Arguments:
 #   $1 - Rollback directory
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #   $3 - Runtime .env
 #
 ###############################################################################
@@ -346,7 +346,7 @@ restore_capture_rollback()
 #
 # Arguments:
 #   $1 - Rollback directory
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #   $3 - Runtime .env
 #
 ###############################################################################
@@ -387,7 +387,7 @@ restore_apply_rollback()
 #
 # Arguments:
 #   $1 - Stage directory
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #   $3 - Runtime .env
 #
 ###############################################################################
@@ -422,7 +422,7 @@ restore_apply_stage()
 #
 # Arguments:
 #   $1 - Stage directory
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #   $3 - Runtime .env
 #
 ###############################################################################
@@ -541,7 +541,7 @@ restore_mark_verified()
 #
 # Arguments:
 #   $1 - Stage directory
-#   $2 - Live Authentik directory
+#   $2 - Live Nextcloud directory
 #   $3 - Runtime .env
 #   $4 - Empty rollback directory
 #

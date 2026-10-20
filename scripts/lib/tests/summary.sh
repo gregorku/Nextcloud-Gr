@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/tests/summary.sh
 #
 # Description:
-#   Print Authentik-netcup test summary.
+#   Print Nextcloud-Gr test summary.
 #
 ###############################################################################
 

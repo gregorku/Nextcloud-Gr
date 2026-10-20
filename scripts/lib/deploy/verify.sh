@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/deploy/verify.sh
 #
 # Description:
-#   Verify Authentik-netcup project before deployment.
+#   Verify Nextcloud-Gr project before deployment.
 #
 ###############################################################################
 

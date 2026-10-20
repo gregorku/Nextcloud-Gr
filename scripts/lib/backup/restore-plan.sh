@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/backup/restore-plan.sh
@@ -186,17 +186,6 @@ restore_validate_stage()
     [[ -f "${stage}/stack.env" ]] \
         || fail "Archive is missing stack.env."
 
-    local manifest_engine
-    local snapshot
-
-    manifest_engine="$(backup_manifest_field "${stage}/manifest.txt" database_engine)"
-    [[ "${manifest_engine}" == "postgresql" ]] \
-        || fail "Manifest database_engine is not postgresql."
-
-    snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_snapshot_id)"
-    backup_restic_snapshot_id_is_valid "${snapshot}" \
-        || fail "Manifest restic snapshot id is missing or not a restic id."
-
     if ! key="$(restore_read_secret_key "${stage}/stack.env")"; then
         fail "The archive has no NEXTCLOUD_ADMIN_PASSWORD."
     fi
@@ -208,4 +197,15 @@ restore_validate_stage()
     unset key
 
     backup_verify_tree "${stage}"
+
+    local manifest_engine
+    local snapshot
+
+    manifest_engine="$(backup_manifest_field "${stage}/manifest.txt" database_engine)"
+    [[ "${manifest_engine}" == "postgresql" ]] \
+        || fail "Manifest database_engine is not postgresql."
+
+    snapshot="$(backup_manifest_field "${stage}/manifest.txt" restic_snapshot_id)"
+    backup_restic_snapshot_id_is_valid "${snapshot}" \
+        || fail "Manifest restic snapshot id is missing or not a restic id."
 }

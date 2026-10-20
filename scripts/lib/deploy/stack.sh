@@ -182,7 +182,7 @@ deploy_sync_stack()
 
     assert_sync_paths
 
-    log_info "Synchronizing Authentik-netcup stack..."
+    log_info "Synchronizing Nextcloud-Gr stack..."
     log_info "rsync --delete is limited to directory items inside ${STACK_DIR}."
 
     mkdir -p "${STACK_DIR}"
@@ -205,5 +205,5 @@ deploy_sync_stack()
 
     done
 
-    log_success "Authentik-netcup stack synchronized."
+    log_success "Nextcloud-Gr stack synchronized."
 }

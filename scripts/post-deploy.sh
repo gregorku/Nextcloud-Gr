@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/post-deploy.sh
 #
 # Description:
-#   Check the running Authentik stack after deploy or reload.
+#   Check the running Nextcloud stack after deploy or reload.
 #
 # Usage:
 #   ./scripts/post-deploy.sh
@@ -57,6 +57,8 @@ source "${SCRIPT_DIR}/lib/checks/load.sh"
 ###############################################################################
 
 source "${SCRIPT_DIR}/lib/env/load.sh"
+source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
+source "${SCRIPT_DIR}/lib/upgrade/version.sh"
 
 ###############################################################################
 # Post-deployment modules
@@ -71,7 +73,7 @@ source "${SCRIPT_DIR}/lib/post-deploy/checks.sh"
 show_help()
 {
 cat <<EOF
-Authentik-netcup Project
+Nextcloud-Gr Project
 
 Usage:
 
@@ -80,11 +82,10 @@ Usage:
 
 Description:
 
-    After the stack is up, check data directories, container health
-    and the HTTP bind ${AUTHENTIK_HOST_IP}:${AUTHENTIK_HTTP_PORT}.
-
-    PostgreSQL must report healthy. The server and the worker must
-    pass "ak healthcheck". A skipped check is not treated as success.
+    Check PostgreSQL, Redis, PHP-FPM, Nginx and cron. Confirm occ
+    status, APCu, /status.php and that database ports are not
+    published. Record the installed Nextcloud tag when those checks
+    pass.
 
 EOF
 }
@@ -109,11 +110,11 @@ case "${1:-}" in
 
 esac
 
-print_header "Authentik-netcup post deployment"
+print_header "Nextcloud-Gr post deployment"
 
 check_environment
-
 check_docker_environment
+require_command curl
 
 post_deploy_checks
 

@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/reload.sh
 #
 # Description:
-#   Reload Authentik-netcup containers.
+#   Reload Nextcloud-Gr containers.
 #
 # Usage:
 #   ./scripts/reload.sh
@@ -61,7 +61,7 @@ source "${SCRIPT_DIR}/lib/docker-compose.sh"
 show_help()
 {
 cat <<EOF
-Authentik-netcup Project
+Nextcloud-Gr
 
 Usage:
 
@@ -88,6 +88,8 @@ Description:
     --remove-orphans deletes services that left the Compose file.
     Persistent data in ${DATA_DIR} is not removed.
 
+    deploy.sh refuses a NEXTCLOUD_TAG that differs from the installed
+    version. A version change belongs to ./scripts/upgrade.sh.
     Afterwards post-deploy.sh and test.sh run.
 
 EOF
@@ -117,7 +119,7 @@ case "${1:-}" in
 
 esac
 
-print_header "Authentik-netcup reload"
+print_header "Nextcloud-Gr reload"
 
 ###############################################################################
 # Deploy

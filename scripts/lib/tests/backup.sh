@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/tests/backup.sh
@@ -79,7 +79,7 @@ test_restore_confirmation()
     fi
 
     restore_versions_match "35.0.2-fpm" "35.0.2-fpm" "no" \
-        || fail "Matching Authentik tags were rejected."
+        || fail "Matching Nextcloud tags were rejected."
 
     if restore_versions_match "35.0.2-fpm" "33.0.10-fpm" "no"; then
         fail "A version mismatch was accepted."
@@ -198,7 +198,7 @@ test_restore_rejects_incomplete()
     [[ "${rejected}" == *"no NEXTCLOUD_ADMIN_PASSWORD"* ]] \
         || fail "A backup without NEXTCLOUD_ADMIN_PASSWORD was accepted: ${rejected}"
 
-    printf 'NEXTCLOUD_ADMIN_PASSWORD=set_authentik_secret_key\n' > "${stage}/stack.env"
+    printf 'NEXTCLOUD_ADMIN_PASSWORD=set_admin_password\n' > "${stage}/stack.env"
 
     rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
 
@@ -227,6 +227,14 @@ test_restore_rejects_incomplete()
 
     [[ "${rejected}" == *"Manifest project is"* ]] \
         || fail "An invalid manifest was accepted: ${rejected}"
+
+    test_fill_backup_stage "${stage}" "${key}" "archive"
+    sed -i 's/^database_engine=.*/database_engine=mariadb/' "${stage}/manifest.txt"
+
+    rejected="$(restore_validate_stage "${stage}" 2>&1)" || true
+
+    [[ "${rejected}" == *"database_engine is not postgresql"* ]] \
+        || fail "A non-PostgreSQL manifest was accepted: ${rejected}"
 
     TEST_SNAPSHOT_FLAG="${work}/snapshot-called"
     rm -f "${TEST_SNAPSHOT_FLAG}"
@@ -517,7 +525,7 @@ test_backup_external_copy()
 }
 
 ###############################################################################
-# Backup stops only the Authentik containers that are running
+# Backup stops only the Nextcloud containers that are running
 ###############################################################################
 
 test_backup_quiesce()

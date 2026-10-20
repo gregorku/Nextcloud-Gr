@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/logging.sh
 #
 # Description:
-#   Common logging functions used by all Authentik-netcup scripts.
+#   Common logging functions used by all Nextcloud-Gr scripts.
 #
 ###############################################################################
 # Internal logging functions
