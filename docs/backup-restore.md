@@ -17,19 +17,26 @@ Age archiv v `/docker-data/backups/nextcloud-gr` je malý. Obsahuje:
 - `stack.env`
 - `manifest.txt` s tagem, hlavní verzí PostgreSQL, sha256 souborů a id restic snapshotu
 
-Uživatelský adresář se do tohoto taru nedává. `restic` ho zálohuje inkrementálně a šifrovaně. Manifest drží id snapshotu pořízeného ve stejném okně: maintenance mode zapnutý, cron zastavený, potom dump, potom kopie malých stromů, potom restic. Teprve potom se maintenance vypne a cron vrátí, pokud je `--hold` vypnutý.
+Uživatelský adresář se do tohoto taru nedává. `restic` ho zálohuje inkrementálně a šifrovaně. Manifest drží id snapshotu pořízeného ve stejném okně: nejdřív se zastaví cron, potom se zapne maintenance mode, potom dump, potom kopie malých stromů, potom restic. Teprve potom se maintenance vypne a cron vrátí, pokud je `--hold` vypnutý.
 
-Archiv bez odpovídajícího restic snapshotu `restore.sh` odmítne. Dump, který nezačíná `PGDMP` nebo obsahuje stopu MariaDB, se nenačte. Hlavní verze PostgreSQL v manifestu musí být 18. Přepínač `--allow-version-mismatch` umí jen rozdílný tag Nextcloudu, ne jinou databázi.
+Archiv bez čitelného restic snapshotu není kompletní záloha. `restore.sh` před jakoukoliv změnou živých dat ověří, že repozitář jde otevřít, že snapshot v manifestu existuje a že `restic ls` jeho strom přečte. Dump, který nezačíná `PGDMP` nebo obsahuje stopu MariaDB, se nenačte. Hlavní verze PostgreSQL v manifestu musí být 18. Přepínač `--allow-version-mismatch` umí jen rozdílný tag Nextcloudu, ne jinou databázi.
+
+## Lokální a externí záloha
+
+Lokální restic repozitář na stejném filesystému jako data, a age archiv v `/docker-data/backups/nextcloud-gr`, jsou bod obnovy na tomto stroji. Nejsou to záloha proti ztrátě disku. Samotný soubor `.tar.gz.age` uživatelské soubory neobsahuje. Jeho zkopírování bez odpovídajícího restic snapshotu `backup.sh` neoznačí jako kompletní zálohu.
+
+Kompletní externí záloha je age archiv (dump, config, custom apps, themes, manifest a id snapshotu) a zároveň čitelný restic snapshot na odděleném úložišti. To splní jedna ze dvou cest:
+
+- `RESTIC_REPOSITORY` je vzdálené schéma `sftp`, `rest`, `s3`, `rclone`, `azure`, `gs`, `b2` nebo `swift`. Snapshot se ověřuje přímo v něm.
+- `RESTIC_REPOSITORY` je lokální cesta a `BACKUP_EXTERNAL_DIR` je mountpoint na jiném zařízení. `backup.sh` tam snapshot přenese příkazem `restic copy` do podadresáře `restic`, ověří ho a teprve potom zkopíruje age archiv. Oba repozitáře používají stejné `RESTIC_PASSWORD`.
+
+`BACKUP_EXTERNAL_DIR` se použije jen když je cesta sama mountpoint a mód `700`. Běžný adresář stejného jména nestačí. Prázdná hodnota u lokálního restic repozitáře znamená, že kompletní externí záloha nevznikla.
 
 ## Klíče a retence
 
 `BACKUP_AGE_RECIPIENT` je veřejný klíč. Privátní identita se předává jen `restore.sh --identity` a musí mít mód `600` nebo `400`.
 
-`RESTIC_PASSWORD` vznikne v `.env`. Bez offline kopie není repozitář po ztrátě disku otevřitelný. Retence je `RESTIC_KEEP_DAILY=7`, `WEEKLY=4`, `MONTHLY=6`, `YEARLY=1`. Nový snapshot má navíc vlastní tag, aby ho `forget` hned nesmazal.
-
-`BACKUP_EXTERNAL_DIR` se použije jen když je cesta sama mountpoint a mód `700`. Běžný adresář stejného jména nestačí. Prázdná hodnota znamená, že age archiv zůstane jen na tomto kontejneru.
-
-Když je restic repozitář na stejném filesystému jako data, `backup.sh` to vypíše. Záloha na stejném disku není záloha proti ztrátě disku. Vzdálené schéma `sftp`, `rest`, `s3`, `rclone`, `azure`, `gs`, `b2` nebo `swift` se považuje za oddělené úložiště.
+`RESTIC_PASSWORD` vznikne v `.env`. Bez offline kopie není repozitář po ztrátě disku otevřitelný. Retence je `RESTIC_KEEP_DAILY=7`, `WEEKLY=4`, `MONTHLY=6`, `YEARLY=1`. Nový snapshot má navíc vlastní tag, aby ho `forget` hned nesmazal. `BACKUP_EXTERNAL_DIR` na stejném zařízení jako data se jako oddělené úložiště nepočítá.
 
 ## Obnova
 

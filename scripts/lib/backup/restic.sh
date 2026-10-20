@@ -31,9 +31,10 @@ backup_restic_repository_is_remote()
 #
 ###############################################################################
 
-backup_restic_run()
+backup_restic_run_at()
 {
-    local repo
+    local repo="$1"
+    shift
     local password
     local passfile
     local status
@@ -41,7 +42,6 @@ backup_restic_run()
     command -v restic >/dev/null 2>&1 \
         || fail "restic is not installed. No user-data backup was kept."
 
-    repo="$(env_get RESTIC_REPOSITORY)"
     password="$(env_get RESTIC_PASSWORD)"
 
     [[ -n "${repo}" && -n "${password}" ]] || return 1
@@ -58,6 +58,11 @@ backup_restic_run()
 
     shred -u "${passfile}" 2>/dev/null || rm -f "${passfile}"
     return "${status}"
+}
+
+backup_restic_run()
+{
+    backup_restic_run_at "$(env_get RESTIC_REPOSITORY)" "$@"
 }
 
 backup_restic_ensure_repo()
@@ -118,14 +123,105 @@ backup_restic_snapshot_dir()
     printf '%s\n' "${snapshot}"
 }
 
+backup_restic_verify_snapshot_at()
+{
+    local repo="$1"
+    local snapshot="$2"
+
+    backup_restic_snapshot_id_is_valid "${snapshot}" || return 1
+    backup_restic_run_at "${repo}" cat config >/dev/null || return 1
+    backup_restic_run_at "${repo}" snapshots --json "${snapshot}" \
+        | grep -q "\"short_id\":\"${snapshot:0:8}\"" || return 1
+    backup_restic_run_at "${repo}" ls "${snapshot}" >/dev/null
+}
+
+backup_restic_verify_snapshot()
+{
+    backup_restic_verify_snapshot_at "$(env_get RESTIC_REPOSITORY)" "$1"
+}
+
 backup_restic_snapshot_exists()
 {
     local snapshot="$1"
 
+    backup_restic_verify_snapshot "${snapshot}"
+}
+
+###############################################################################
+# Copy one snapshot into another repository that uses the same password.
+#
+# Arguments:
+#   $1 - Snapshot id
+#   $2 - Destination repository
+#
+###############################################################################
+
+backup_restic_copy_snapshot()
+{
+    local snapshot="$1"
+    local destination="$2"
+    local source
+    local passfile
+    local status
+
     backup_restic_snapshot_id_is_valid "${snapshot}" || return 1
-    backup_restic_run cat config >/dev/null
-    backup_restic_run snapshots --json "${snapshot}" \
-        | grep -q "\"short_id\":\"${snapshot:0:8}\""
+    source="$(env_get RESTIC_REPOSITORY)"
+    [[ -n "${source}" && "${source}" != "${destination}" ]] || return 1
+
+    if ! backup_restic_run_at "${destination}" snapshots >/dev/null 2>&1; then
+        backup_restic_run_at "${destination}" init || return 1
+    fi
+
+    command -v restic >/dev/null 2>&1 || return 1
+    passfile="$(mktemp)"
+    chmod 600 "${passfile}"
+    printf '%s\n' "$(env_get RESTIC_PASSWORD)" > "${passfile}"
+
+    set +e
+    RESTIC_PASSWORD_FILE="${passfile}" \
+        RESTIC_FROM_PASSWORD_FILE="${passfile}" \
+        restic -r "${destination}" copy --from-repo "${source}" "${snapshot}"
+    status=$?
+    set -e
+
+    shred -u "${passfile}" 2>/dev/null || rm -f "${passfile}"
+    return "${status}"
+}
+
+###############################################################################
+# Classify whether the age archive and the restic snapshot together
+# are an external restore point.
+#
+# Arguments:
+#   $1 - primary repository is remote: yes or no
+#   $2 - snapshot verified in the primary repository: yes or no
+#   $3 - snapshot verified on separate storage: yes or no
+#   $4 - age manifest names a snapshot id: yes or no
+#
+# Prints external, local-only or incomplete.
+# Returns 0, 2 or 1 in that order.
+#
+###############################################################################
+
+backup_completeness()
+{
+    local repo_remote="$1"
+    local snapshot_in_primary="$2"
+    local snapshot_on_separate="$3"
+    local age_has_snapshot="$4"
+
+    if [[ "${age_has_snapshot}" != "yes" || "${snapshot_in_primary}" != "yes" ]]; then
+        printf 'incomplete\n'
+        return 1
+    fi
+
+    if [[ "${repo_remote}" == "yes" || "${snapshot_on_separate}" == "yes" ]]; then
+        printf 'external\n'
+        return 0
+    fi
+
+    printf 'local-only\n'
+    return 2
 }
 
 ###############################################################################

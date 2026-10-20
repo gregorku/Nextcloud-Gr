@@ -158,3 +158,141 @@ test_storage_guard()
 
     ok "Data directories on the root filesystem are refused."
 }
+
+test_php_matrix()
+{
+    print_section "PHP matrix"
+
+    upgrade_php_is_supported 35 "8.5.1" \
+        || fail "PHP 8.5.1 was rejected for Nextcloud 35."
+
+    upgrade_php_is_supported 35 "8.3.0" \
+        || fail "PHP 8.3.0 was rejected for Nextcloud 35."
+
+    if upgrade_php_is_supported 35 "8.2.28"; then
+        fail "PHP 8.2 was accepted for Nextcloud 35."
+    fi
+
+    local status=0
+    upgrade_php_is_supported 36 "8.5.1" || status=$?
+    [[ "${status}" -eq 2 ]] \
+        || fail "An unverified Nextcloud major was not refused (status ${status})."
+
+    ok "PHP support is limited to the verified Nextcloud 35 matrix."
+}
+
+test_custom_app_compatibility()
+{
+    print_section "Custom app compatibility"
+
+    local work
+    local apps
+    local enabled
+    local message
+
+    work="$(mktemp -d)"
+    apps="${work}/custom_apps"
+    enabled="${work}/enabled"
+    mkdir -p "${apps}/notes/appinfo" "${apps}/oldapp/appinfo"
+
+    printf '%s\n' \
+        '<info><dependencies><nextcloud min-version="30" max-version="35"/></dependencies></info>' \
+        > "${apps}/notes/appinfo/appinfo.xml"
+    printf '%s\n' \
+        '<info><nextcloud min-version="20" max-version="34"/></info>' \
+        > "${apps}/oldapp/appinfo/appinfo.xml"
+
+    printf 'notes\nfiles\n' > "${enabled}"
+    upgrade_custom_apps_allow_major "${apps}" 35 "${enabled}" \
+        || fail "A custom app within its max-version was rejected."
+
+    printf 'oldapp\n' > "${enabled}"
+    message="$(upgrade_custom_apps_allow_major "${apps}" 35 "${enabled}" 2>&1)" || true
+    [[ "${message}" == *"oldapp"* ]] \
+        || fail "An incompatible custom app was accepted: ${message}"
+
+    printf '<info></info>\n' > "${apps}/notes/appinfo/appinfo.xml"
+    printf 'notes\n' > "${enabled}"
+    if upgrade_custom_apps_allow_major "${apps}" 35 "${enabled}" >/dev/null; then
+        fail "A custom app without max-version was accepted."
+    fi
+
+    rm -rf "${work}"
+
+    ok "Custom apps outside the target major are refused."
+}
+
+test_upgrade_sequence()
+{
+    print_section "Upgrade sequence"
+
+    local work
+    local events
+    local status
+
+    work="$(mktemp -d)"
+    events="${work}/events"
+
+    (
+        upgrade_phase_stop_cron() { printf 'stop\n' >> "${events}"; }
+        upgrade_phase_check_apps() { printf 'apps\n' >> "${events}"; }
+        upgrade_phase_hold_backup() { printf 'backup\n' >> "${events}"; }
+        upgrade_phase_recreate_app() { printf 'app\n' >> "${events}"; }
+        upgrade_phase_verify() { printf 'verify\n' >> "${events}"; }
+        upgrade_phase_recreate_cron() { printf 'cron\n' >> "${events}"; }
+        upgrade_phase_leave_maintenance() { printf 'maintenance-off\n' >> "${events}"; }
+        upgrade_phase_start_previous() { printf 'old-image\n' >> "${events}"; }
+        upgrade_run_sequence
+    ) || fail "The successful upgrade sequence returned an error."
+
+    [[ "$(paste -sd, "${events}")" == "stop,apps,backup,app,verify,cron,maintenance-off" ]] \
+        || fail "Upgrade order was $(paste -sd, "${events}")."
+
+    : > "${events}"
+    status=0
+    (
+        upgrade_phase_stop_cron() { printf 'stop\n' >> "${events}"; }
+        upgrade_phase_check_apps() { printf 'apps\n' >> "${events}"; }
+        upgrade_phase_hold_backup() { printf 'backup\n' >> "${events}"; }
+        upgrade_phase_recreate_app() { printf 'app\n' >> "${events}"; }
+        upgrade_phase_verify() { printf 'verify\n' >> "${events}"; return 1; }
+        upgrade_phase_recreate_cron() { printf 'cron\n' >> "${events}"; }
+        upgrade_phase_leave_maintenance() { printf 'maintenance-off\n' >> "${events}"; }
+        upgrade_phase_start_previous() { printf 'old-image\n' >> "${events}"; }
+        upgrade_run_sequence
+    ) || status=$?
+
+    [[ "${status}" -ne 0 ]] \
+        || fail "A failed verification was treated as success."
+
+    [[ "$(paste -sd, "${events}")" == "stop,apps,backup,app,verify,stop" ]] \
+        || fail "Failed upgrade order was $(paste -sd, "${events}")."
+
+    if grep -qx 'cron' "${events}" || grep -qx 'old-image' "${events}"; then
+        fail "A failed upgrade started cron or the previous image."
+    fi
+
+    local root
+    root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+    grep -q 'command:' "${root}/compose/50-cron.yml" \
+        || fail "Cron does not set a command."
+    grep -Fq -- '- /cron.sh' "${root}/compose/50-cron.yml" \
+        || fail "Cron command is not /cron.sh."
+    grep -Fq 'NEXTCLOUD_UPDATE: "0"' "${root}/compose/50-cron.yml" \
+        || fail "Cron does not set NEXTCLOUD_UPDATE=0."
+    if grep -Eq '^[[:space:]]*entrypoint:' "${root}/compose/50-cron.yml"; then
+        fail "Cron replaces the image entrypoint."
+    fi
+    if grep -Eq '^[[:space:]]*entrypoint:|^[[:space:]]*NEXTCLOUD_UPDATE:' \
+        "${root}/compose/30-nextcloud-fpm.yml"; then
+        fail "The PHP-FPM service overrides the entrypoint or sets NEXTCLOUD_UPDATE."
+    fi
+    if grep -q 'compose_cmd' "${root}/scripts/upgrade.sh"; then
+        fail "upgrade.sh starts containers outside the single sequence."
+    fi
+
+    rm -rf "${work}"
+
+    ok "Cron stays stopped until the upgrade is verified."
+}

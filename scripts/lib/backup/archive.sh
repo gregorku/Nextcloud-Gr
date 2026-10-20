@@ -28,6 +28,7 @@
 #   $5 - PostgreSQL image
 #   $6 - PostgreSQL major
 #   $7 - Restic snapshot id
+#   $8 - remote or local. Omitted values stay "unspecified".
 #
 ###############################################################################
 
@@ -40,6 +41,7 @@ backup_write_manifest()
     local postgres_image="$5"
     local postgres_major="${6:-${POSTGRES_MAJOR}}"
     local restic_snapshot_id="${7:-}"
+    local restic_repository_scope="${8:-unspecified}"
     local manifest="${stage}/manifest.txt"
     local path
     local hash
@@ -61,6 +63,7 @@ backup_write_manifest()
         printf 'database_engine=postgresql\n'
         printf 'database_file=postgresql/nextcloud.dump\n'
         printf 'restic_snapshot_id=%s\n' "${restic_snapshot_id}"
+        printf 'restic_repository_scope=%s\n' "${restic_repository_scope}"
         printf 'data_backup=restic\n'
     } > "${manifest}"
 

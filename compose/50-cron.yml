@@ -6,9 +6,12 @@
 #   compose/50-cron.yml
 #
 # Description:
-#   /cron.sh from the same Nextcloud image and the same volumes as the
-#   PHP-FPM service. NEXTCLOUD_UPDATE stays unset, so this custom
-#   entrypoint does not run the image upgrade.
+#   Same Nextcloud image and volumes as PHP-FPM. The image entrypoint
+#   stays in place and the command is /cron.sh. Official
+#   docker-entrypoint.sh runs install or upgrade only for php-fpm
+#   (and apache) or when NEXTCLOUD_UPDATE=1. NEXTCLOUD_UPDATE=0 keeps
+#   this command from doing either. Checked against
+#   nextcloud/docker docker-entrypoint.sh on 2026-10-20.
 #
 ###############################################################################
 
@@ -27,7 +30,8 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    entrypoint: /cron.sh
+    command:
+      - /cron.sh
 
     environment:
 

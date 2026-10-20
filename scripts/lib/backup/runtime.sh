@@ -8,9 +8,9 @@
 #   scripts/lib/backup/runtime.sh
 #
 # Description:
-#   Put Nextcloud into maintenance mode and stop cron for the duration
-#   of a consistent backup. PostgreSQL stays running so pg_dump can
-#   read it. Only cron that this script stopped is started again.
+#   Stop cron before maintenance mode, then keep PostgreSQL running
+#   so pg_dump can read it. Only cron that this script stopped is
+#   started again.
 #
 ###############################################################################
 
@@ -52,14 +52,8 @@ backup_quiesce_writers()
     BACKUP_MAINTENANCE_ON=no
     BACKUP_RESUMED=no
 
-    backup_enter_maintenance \
-        || fail "Could not enable maintenance mode. Backup was not started."
-
-    BACKUP_MAINTENANCE_ON=yes
-    ok "Nextcloud maintenance mode is on."
-
     if docker_container_running "${NEXTCLOUD_CRON_CONTAINER}"; then
-        info "Stopping ${NEXTCLOUD_CRON_CONTAINER} so cron does not write during the backup."
+        info "Stopping ${NEXTCLOUD_CRON_CONTAINER} before maintenance mode."
 
         backup_stop_container "${NEXTCLOUD_CRON_CONTAINER}" \
             || fail "Could not stop ${NEXTCLOUD_CRON_CONTAINER}. Backup was not started."
@@ -69,6 +63,12 @@ backup_quiesce_writers()
     else
         info "${NEXTCLOUD_CRON_CONTAINER} is already stopped. This backup will not start it."
     fi
+
+    backup_enter_maintenance \
+        || fail "Could not enable maintenance mode. Backup was not started."
+
+    BACKUP_MAINTENANCE_ON=yes
+    ok "Nextcloud maintenance mode is on."
 }
 
 backup_resume_writers()

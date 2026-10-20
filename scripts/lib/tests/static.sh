@@ -164,27 +164,7 @@ test_compose_bindings()
         fail "Nginx config listens for TLS."
     fi
 
-    ok "Compose bindings match the Nextcloud stack."
-
-    if command -v docker >/dev/null 2>&1 \
-        && docker compose version >/dev/null 2>&1; then
-
-        local work
-        work="$(mktemp -d)"
-        cp "${root}/.env.example" "${work}/.env"
-        sed -i 's/^NEXTCLOUD_BACKEND_BIND=.*/NEXTCLOUD_BACKEND_BIND=192.0.2.10/' "${work}/.env"
-
-        docker compose \
-            --env-file "${work}/.env" \
-            -f "${root}/compose.yml" \
-            config >/dev/null \
-            || fail "docker compose config failed."
-
-        rm -rf "${work}"
-        ok "docker compose config accepted the project."
-    else
-        warn "Docker Compose CLI is not available. docker compose config was not executed."
-    fi
+    ok "Compose file constraints match the Nextcloud stack."
 }
 
 test_sync_guards()
@@ -281,4 +261,72 @@ test_script_modes()
     done < <(find "${root}/scripts" "${root}/configs" -name '*.sh' -print0)
 
     ok "Shell scripts are mode 755."
+}
+
+test_external_validators()
+{
+    print_section "External validators"
+
+    local root
+    local work
+
+    root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+    if command -v docker >/dev/null 2>&1 \
+        && docker compose version >/dev/null 2>&1; then
+
+        work="$(mktemp -d)"
+        cp "${root}/.env.example" "${work}/.env"
+        sed -i 's/^NEXTCLOUD_BACKEND_BIND=.*/NEXTCLOUD_BACKEND_BIND=192.0.2.10/' "${work}/.env"
+
+        docker compose \
+            --env-file "${work}/.env" \
+            -f "${root}/compose.yml" \
+            config >/dev/null \
+            || fail "docker compose config failed."
+
+        rm -rf "${work}"
+        ok "PROVEDENO: docker compose config"
+    else
+        log_not_performed "docker compose config. Docker Compose CLI is not installed, so Compose YAML was not validated."
+    fi
+
+    if command -v shellcheck >/dev/null 2>&1; then
+        "${root}/scripts/shellcheck.sh" \
+            || fail "shellcheck reported a problem."
+        ok "PROVEDENO: shellcheck"
+    else
+        log_not_performed "shellcheck. The binary is not installed, so shell scripts were not linted."
+    fi
+
+    if command -v nginx >/dev/null 2>&1; then
+        work="$(mktemp -d)"
+        mkdir -p "${work}/conf.d"
+        printf 'set_real_ip_from 192.0.2.1;\nreal_ip_header X-Forwarded-For;\n' > "${work}/real-ip.conf"
+        if [[ -f /etc/nginx/mime.types ]]; then
+            cp /etc/nginx/mime.types "${work}/mime.types"
+        fi
+        sed \
+            -e "s#include /etc/nginx/real-ip.conf;#include ${work}/real-ip.conf;#" \
+            -e "s#include mime.types;#include ${work}/mime.types;#" \
+            "${root}/configs/nginx/nginx.conf" > "${work}/nginx.conf"
+        nginx -t -p "${work}" -c "${work}/nginx.conf" \
+            || fail "nginx -t rejected configs/nginx/nginx.conf."
+        rm -rf "${work}"
+        ok "PROVEDENO: nginx -t"
+    elif command -v docker >/dev/null 2>&1 \
+        && docker image inspect "docker.io/library/nginx:1.30.6-alpine" >/dev/null 2>&1; then
+        work="$(mktemp -d)"
+        printf 'set_real_ip_from 192.0.2.1;\nreal_ip_header X-Forwarded-For;\n' > "${work}/real-ip.conf"
+        docker run --rm --network none \
+            -v "${root}/configs/nginx/nginx.conf:/etc/nginx/conf.d/nextcloud.conf:ro" \
+            -v "${work}/real-ip.conf:/etc/nginx/real-ip.conf:ro" \
+            "docker.io/library/nginx:1.30.6-alpine" \
+            nginx -t \
+            || fail "nginx -t in the local nginx image rejected the configuration."
+        rm -rf "${work}"
+        ok "PROVEDENO: nginx -t in docker.io/library/nginx:1.30.6-alpine"
+    else
+        log_not_performed "nginx -t. Neither nginx nor a local nginx:1.30.6-alpine image is available, and no image was pulled."
+    fi
 }

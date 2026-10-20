@@ -70,13 +70,17 @@ Description:
 
         ${BACKUP_LOCAL_DIR}
 
-    It does not contain the data directory. The manifest names the
-    restic snapshot taken in the same window. A local restic
-    repository on the same filesystem is not protection against
-    loss of that disk. backup.sh says so when that is the case.
+    It contains the PostgreSQL dump, config, custom apps, themes and
+    the restic snapshot id. It does not contain the data directory.
+    An age file without that snapshot in a reachable restic repository
+    is not a complete backup.
 
-    BACKUP_AGE_RECIPIENT is the public age recipient. Without it,
-    or without age or restic, no archive is kept.
+    A remote RESTIC_REPOSITORY (sftp, rest, s3, rclone, azure, gs, b2
+    or swift) is the external copy of user data. A local repository
+    is not. When BACKUP_EXTERNAL_DIR is a real mount on another
+    device, backup.sh also copies the snapshot there with restic copy
+    and then copies the age archive. Copying only the age archive is
+    not reported as a complete external backup.
 
     --hold is for upgrade.sh. After success, maintenance mode stays
     on and cron stays stopped.
@@ -203,6 +207,15 @@ snapshot_id="$(
         "backup-${stamp}"
 )" || fail "restic did not produce a snapshot. No archive was kept."
 
+if ! backup_restic_verify_snapshot "${snapshot_id}"; then
+    fail "Restic snapshot ${snapshot_id} is not readable in RESTIC_REPOSITORY. No archive was kept."
+fi
+
+repo_scope="local"
+if backup_restic_repository_is_remote "$(env_get RESTIC_REPOSITORY)"; then
+    repo_scope="remote"
+fi
+
 nextcloud_image="$(env_get NEXTCLOUD_IMAGE)"
 nextcloud_tag="$(env_get NEXTCLOUD_TAG)"
 postgres_image="$(env_get POSTGRES_IMAGE)"
@@ -214,7 +227,8 @@ backup_write_manifest \
     "${nextcloud_tag}" \
     "${postgres_image}" \
     "${postgres_major}" \
-    "${snapshot_id}"
+    "${snapshot_id}" \
+    "${repo_scope}"
 
 if ! backup_require_private_tree "${stage}"; then
     fail "Backup stage is not mode 700 with mode 600 files. No archive was kept."
@@ -261,16 +275,50 @@ then
 fi
 
 external="$(env_get BACKUP_EXTERNAL_DIR)"
-separate=0
-backup_warn_if_repository_not_separate || separate=$?
+snapshot_on_separate="no"
+data_dir="$(env_get NEXTCLOUD_DATA_HOST_DIR)"
 
-if [[ -z "${external}" ]]; then
-    warn "BACKUP_EXTERNAL_DIR is empty."
-    warn "The encrypted archive stays only on this Incus container:"
-    info "${archive}"
-    warn "An archive on the same machine is not a backup against loss of this disk."
+if [[ "${repo_scope}" == "remote" ]]; then
+    snapshot_on_separate="yes"
+    if [[ -n "${external}" ]]; then
+        backup_publish_encrypted "${archive}" "${external}" "${BACKUP_LOCAL_DIR}"
+        warn "The age archive on the external mount does not contain user files."
+        warn "The restic snapshot ${snapshot_id} is in the remote RESTIC_REPOSITORY."
+    fi
+elif [[ -n "${external}" ]]; then
+    destination_kind="$(backup_classify_destination "${external}" "${BACKUP_LOCAL_DIR}")"
+    [[ "${destination_kind}" == "host-mount" ]] \
+        || fail "BACKUP_EXTERNAL_DIR is not a mounted mountpoint. Refusing to call an age-only copy a complete backup."
+
+    external_root="$(realpath -e "${external}")"
+    if [[ "$(stat -c '%d' "${external_root}")" == "$(stat -c '%d' "${data_dir}")" ]]; then
+        warn "BACKUP_EXTERNAL_DIR is on the same device as the Nextcloud data."
+        warn "The age archive was not treated as a complete external backup."
+    else
+        external_repo="${external_root}/restic"
+        mkdir -p "${external_repo}"
+        chmod 700 "${external_repo}"
+        backup_restic_copy_snapshot "${snapshot_id}" "${external_repo}" \
+            || fail "restic copy to ${external_repo} failed. The age archive alone was not published as a complete backup."
+        backup_restic_verify_snapshot_at "${external_repo}" "${snapshot_id}" \
+            || fail "The copied restic snapshot ${snapshot_id} is not readable. Persistent data was not called backed up."
+        backup_publish_encrypted "${archive}" "${external}" "${BACKUP_LOCAL_DIR}"
+        snapshot_on_separate="yes"
+        ok "Restic snapshot ${snapshot_id} is readable on ${external_repo}."
+    fi
+elif [[ "${repo_scope}" == "local" ]]; then
+    warn "BACKUP_EXTERNAL_DIR is empty and RESTIC_REPOSITORY is a local path."
+    warn "The age archive does not contain the user files."
+fi
+
+if [[ "${repo_scope}" == "local" ]]; then
+    backup_warn_if_repository_not_separate || true
+fi
+
+if [[ "${repo_scope}" == "remote" ]]; then
+    completeness="$(backup_completeness yes yes no yes)"
 else
-    backup_publish_encrypted "${archive}" "${external}" "${BACKUP_LOCAL_DIR}"
+    completeness="$(backup_completeness no yes "${snapshot_on_separate}" yes)" || true
 fi
 
 if [[ "${hold}" == "yes" ]]; then
@@ -282,8 +330,15 @@ if ! backup_finish_writers; then
     exit 1
 fi
 
-if [[ "${separate}" -eq 2 || -z "${external}" ]]; then
-    print_footer "Backup completed. It is not yet a copy on another disk."
-else
-    print_footer "Backup completed. Verify the remote restic repository and the age copy independently."
-fi
+case "${completeness}" in
+    external)
+        print_footer "Complete external backup: age archive ${archive} plus restic snapshot ${snapshot_id}."
+        ;;
+    local-only)
+        warn "This is a local restore point only. The age archive does not contain user files, and the restic snapshot is not on separate storage."
+        print_footer "Backup completed. It is not a complete external backup."
+        ;;
+    *)
+        fail "Backup is incomplete. The age archive was not accepted without a readable restic snapshot."
+        ;;
+esac

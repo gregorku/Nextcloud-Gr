@@ -187,8 +187,8 @@ if ! restore_postgres_major_ok "${manifest_major}" "${POSTGRES_MAJOR}" "no"; the
 fi
 
 snapshot="$(backup_manifest_field "${manifest}" restic_snapshot_id)"
-if ! backup_restic_snapshot_exists "${snapshot}"; then
-    fail "Restic snapshot ${snapshot} is not present. Persistent data was not changed."
+if ! backup_restic_verify_snapshot "${snapshot}"; then
+    fail "Restic repository is not reachable or snapshot ${snapshot} is not intact. Persistent data was not changed."
 fi
 
 if [[ "${replace_data}" != "yes" ]]; then

@@ -575,6 +575,11 @@ test_backup_quiesce()
     grep -qx "stop ${NEXTCLOUD_CRON_CONTAINER}" "${events}" \
         || fail "A running cron container was not stopped for the backup."
 
+    stop_line="$(grep -n "stop ${NEXTCLOUD_CRON_CONTAINER}" "${events}" | head -n 1 | cut -d: -f1)"
+    maintenance_line="$(grep -n "maintenance on" "${events}" | head -n 1 | cut -d: -f1)"
+    [[ "${stop_line}" -lt "${maintenance_line}" ]] \
+        || fail "Cron was not stopped before maintenance mode."
+
     grep -qx "start ${NEXTCLOUD_CRON_CONTAINER}" "${events}" \
         || fail "Cron stopped for the backup was not started again."
 
@@ -588,6 +593,36 @@ test_backup_quiesce()
     rm -rf "${work}"
 
     ok "Backup stops and starts only the containers it found running."
+}
+
+test_backup_completeness()
+{
+    print_section "Backup completeness"
+
+    local label
+    local status
+
+    label="$(backup_completeness yes yes no yes)" \
+        || fail "A remote restic snapshot was not an external backup."
+    [[ "${label}" == "external" ]] \
+        || fail "Remote completeness was ${label}."
+
+    status=0
+    label="$(backup_completeness no yes no yes)" || status=$?
+    [[ "${status}" -eq 2 && "${label}" == "local-only" ]] \
+        || fail "A local repository with only an age archive was called complete (${label}, ${status})."
+
+    label="$(backup_completeness no yes yes yes)" \
+        || fail "A verified restic copy on separate storage was rejected."
+    [[ "${label}" == "external" ]] \
+        || fail "Separate restic copy was ${label}."
+
+    status=0
+    label="$(backup_completeness yes no no yes)" || status=$?
+    [[ "${status}" -eq 1 && "${label}" == "incomplete" ]] \
+        || fail "An age archive without a readable snapshot was accepted (${label})."
+
+    ok "An age archive without its restic snapshot is not a complete backup."
 }
 
 ###############################################################################

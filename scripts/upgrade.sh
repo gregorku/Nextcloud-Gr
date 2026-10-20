@@ -36,6 +36,9 @@ source "${SCRIPT_DIR}/lib/checks/load.sh"
 source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/upgrade/php.sh"
+source "${SCRIPT_DIR}/lib/upgrade/apps.sh"
+source "${SCRIPT_DIR}/lib/upgrade/sequence.sh"
 
 show_help()
 {
@@ -53,16 +56,20 @@ Description:
     Change that pin in Git, run update-env.sh, then run this script.
     deploy.sh will refuse the same pin change.
 
-    The script checks the installed tag, the one-step rule, PHP in
-    the target image, free space and service health. It then runs
-    backup.sh --hold, recreates only the PHP-FPM container, and
-    waits for occ status. Cron is recreated only after that succeeds.
+    The script checks the installed tag, the one-step rule, the verified
+    PHP matrix for that major, free space and service health. It stops
+    cron, checks custom apps, runs backup.sh --hold, and recreates only
+    the PHP-FPM container. Cron is recreated from the same tag only
+    after occ status, needsDbUpgrade and /status.php succeed.
+
+    A Nextcloud major that is not in scripts/lib/upgrade/php.sh is
+    refused even when the one-step rule would allow it.
 
     PostgreSQL major upgrades are refused.
 
-    On failure the previous image is not started. Restore the backup
-    named in the error with restore.sh. Remove ${UPGRADE_LOCK_FILE}
-    only after that decision.
+    On failure the previous image is not started and cron is stopped.
+    Restore the backup named in the error with restore.sh. Remove
+    ${UPGRADE_LOCK_FILE} only after that decision.
 
 EOF
 }
@@ -161,9 +168,16 @@ docker pull "${image}:${target}" >/dev/null
 php_version="$(
     docker run --rm --entrypoint php "${image}:${target}" -r 'echo PHP_VERSION;'
 )"
-[[ "${php_version}" =~ ^8\.(3|4|5)\. ]] \
-    || fail "Target image PHP is ${php_version}. Nextcloud 35 requires PHP 8.3, 8.4 or 8.5."
-ok "Target image PHP ${php_version}."
+target_major="${target%%.*}"
+php_support=0
+upgrade_php_is_supported "${target_major}" "${php_version}" || php_support=$?
+if [[ "${php_support}" -eq 2 ]]; then
+    fail "Nextcloud ${target_major} has no verified PHP matrix in this repository. Refusing the upgrade."
+fi
+if [[ "${php_support}" -ne 0 ]]; then
+    fail "Target image PHP is ${php_version}. The verified matrix for Nextcloud ${target_major} does not include it."
+fi
+ok "Target image PHP ${php_version} is in the verified matrix for Nextcloud ${target_major}."
 
 upgrade_require_space "$(env_get NEXTCLOUD_DATA_HOST_DIR)" "Nextcloud data"
 upgrade_require_space "$(env_get POSTGRESQL_HOST_DIR)" "PostgreSQL"
@@ -214,61 +228,21 @@ upgrade_failed()
             printf 'Do not start the previous image if the database may already be migrated.\n'
             printf 'Restore with ./scripts/restore.sh and docs/upgrade.md.\n'
         } > "${UPGRADE_LOCK_FILE}"
-        warn "Upgrade failed. Maintenance mode and cron were left as backup.sh --hold set them when the backup succeeded."
-        warn "The previous Nextcloud image was not started."
+        warn "Upgrade failed. Cron was stopped and the previous Nextcloud image was not started."
+        warn "Do not run cron against a database that may already be migrated."
+        upgrade_phase_stop_cron || true
     fi
     exit "${status}"
 }
 
 trap 'upgrade_failed' EXIT
 
-info "Enabled applications before the image change:"
-nextcloud_occ app:list || fail "occ app:list failed. Upgrade was not started."
+export UPGRADE_EXPECTED_TAG="${target}"
 
-"${SCRIPT_DIR}/backup.sh" --hold
-
-info "Recreating only ${NEXTCLOUD_SERVICE}. Cron stays stopped."
-compose_cmd up -d --no-deps --force-recreate "${NEXTCLOUD_SERVICE}"
-
-expected="$(upgrade_release_number "${target}")"
-attempt=0
-ready="no"
-
-while [[ "${attempt}" -lt 120 ]]
-do
-    attempt=$((attempt + 1))
-    version_now="$(nextcloud_occ_status_value versionstring || true)"
-    installed_now="$(nextcloud_occ_status_value installed || true)"
-
-    if [[ "${installed_now}" == "true" && "${version_now}" == "${expected}" ]]; then
-        ready="yes"
-        break
-    fi
-
-    if ! docker_container_running "${NEXTCLOUD_APP_CONTAINER}"; then
-        docker logs --tail 80 "${NEXTCLOUD_APP_CONTAINER}" || true
-        fail "Nextcloud container exited during the upgrade."
-    fi
-
-    sleep 15
-done
-
-[[ "${ready}" == "yes" ]] \
-    || fail "Timed out waiting for Nextcloud ${expected}. See docker logs ${NEXTCLOUD_APP_CONTAINER}. Do not start the old image."
-
-bind="$(env_get NEXTCLOUD_BACKEND_BIND)"
-port="$(env_get NEXTCLOUD_BACKEND_PORT)"
-status_body="$(curl -fsS "http://${bind}:${port}/status.php")" \
-    || fail "status.php is not reachable at http://${bind}:${port}/status.php"
-
-[[ "${status_body}" == *'"installed":true'* ]] \
-    || fail "status.php does not report installed:true."
-
-info "Recreating cron from ${target} now that the upgrade succeeded."
-compose_cmd up -d --no-deps --force-recreate "${CRON_SERVICE}"
-
-nextcloud_maintenance off \
-    || fail "Upgrade finished but maintenance mode could not be turned off."
+info "Stopping cron, then checking apps, then upgrading only ${NEXTCLOUD_SERVICE}."
+if ! upgrade_run_sequence; then
+    fail "Upgrade to ${target} failed. Cron was not left running and the previous image was not started."
+fi
 
 printf '%s\n' "${target}" > "${INSTALLED_VERSION_FILE}"
 chmod 600 "${INSTALLED_VERSION_FILE}"

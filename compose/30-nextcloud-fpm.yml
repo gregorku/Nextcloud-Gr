@@ -9,11 +9,13 @@
 #   Official Nextcloud PHP-FPM image. Port 9000 stays on the Docker
 #   network. Nginx is the only published service.
 #
-#   The default command is php-fpm, so the image entrypoint can install
-#   or upgrade this container. deploy.sh refuses to start it when
-#   NEXTCLOUD_TAG differs from the recorded installed version.
-#   cron uses the same image and the same volumes, with NEXTCLOUD_UPDATE
-#   left at 0 and a custom entrypoint, so it does not run that upgrade.
+#   No custom entrypoint and no custom command: the image CMD is
+#   php-fpm, so docker-entrypoint.sh may install or upgrade this
+#   container. NEXTCLOUD_UPDATE is left unset. Setting it to 0 would
+#   not disable that path, because the entrypoint also enters it for
+#   php-fpm. deploy.sh refuses to start a tag that differs from the
+#   recorded installed version. Cron uses the same image with command
+#   /cron.sh and NEXTCLOUD_UPDATE=0, so it does not upgrade.
 #
 ###############################################################################
 

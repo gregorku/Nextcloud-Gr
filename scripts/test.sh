@@ -66,6 +66,9 @@ source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/deploy/stack.sh"
 source "${SCRIPT_DIR}/lib/mount.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/upgrade/php.sh"
+source "${SCRIPT_DIR}/lib/upgrade/apps.sh"
+source "${SCRIPT_DIR}/lib/upgrade/sequence.sh"
 source "${SCRIPT_DIR}/lib/backup/private.sh"
 source "${SCRIPT_DIR}/lib/backup/archive.sh"
 source "${SCRIPT_DIR}/lib/backup/crypto.sh"
@@ -127,7 +130,11 @@ run_static_tests()
     test_compose_bindings
     test_sync_guards
     test_script_modes
+    test_external_validators
     test_version_guard
+    test_php_matrix
+    test_custom_app_compatibility
+    test_upgrade_sequence
     test_dump_kind
     test_storage_guard
     test_backup_archive
@@ -139,6 +146,7 @@ run_static_tests()
     test_backup_host_mount
     test_backup_cleanup_failure
     test_backup_quiesce
+    test_backup_completeness
     test_restore_confirmation
     test_restore_rejects_incomplete
     test_restore_rolls_back
