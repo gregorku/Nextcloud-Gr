@@ -20,9 +20,7 @@
 ###############################################################################
 
 services:
-
   nextcloud:
-
     image: ${NEXTCLOUD_IMAGE}:${NEXTCLOUD_TAG}
 
     container_name: nextcloud-gr-app
@@ -37,7 +35,6 @@ services:
     stop_grace_period: 60s
 
     environment:
-
       POSTGRES_HOST: postgresql
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
@@ -66,14 +63,12 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN}
 
     volumes:
-
       - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html
       - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data
       - ./configs/nextcloud/hooks/10-apcu.sh:/docker-entrypoint-hooks.d/post-installation/10-apcu.sh:ro
       - ./configs/nextcloud/hooks/10-apcu.sh:/docker-entrypoint-hooks.d/post-upgrade/10-apcu.sh:ro
 
     depends_on:
-
       postgresql:
         condition: service_healthy
 
@@ -81,25 +76,19 @@ services:
         condition: service_healthy
 
     healthcheck:
-
       test:
         - CMD-SHELL
-        - php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);'
-
+        - >-
+          php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);'
       interval: 30s
-
       timeout: 5s
-
       retries: 5
-
       start_period: 180s
 
     networks:
-
       - nextcloud-gr
 
     logging:
-
       driver: json-file
 
       options:
