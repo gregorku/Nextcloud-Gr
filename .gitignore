@@ -1,6 +1,8 @@
 .env
 .env.bak-*
 .env.tmp
+runtime/
 *.tar.gz
 *.tar.gz.age
 *.sha256
+*.dump

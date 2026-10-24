@@ -1,0 +1,68 @@
+###############################################################################
+#
+# Nextcloud-Gr Project
+#
+# File:
+#   compose/20-redis.yml
+#
+# Description:
+#   Redis for Nextcloud local cache and transactional locking.
+#   It is not a content database and it has no host port.
+#
+#   deploy.sh writes runtime/redis.conf with the generated password.
+#   The password is not placed on the server command line.
+#
+###############################################################################
+
+services:
+
+  redis:
+
+    image: ${REDIS_IMAGE}
+
+    container_name: nextcloud-gr-redis
+
+    hostname: nextcloud-gr-redis
+
+    restart: unless-stopped
+
+    security_opt:
+      - no-new-privileges:true
+
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+
+    volumes:
+
+      - ./runtime/redis.conf:/usr/local/etc/redis/redis.conf:ro
+
+    healthcheck:
+
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG
+
+      interval: 30s
+
+      timeout: 5s
+
+      retries: 5
+
+      start_period: 10s
+
+    environment:
+
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+    networks:
+
+      - nextcloud-gr
+
+    logging:
+
+      driver: json-file
+
+      options:
+        max-size: ${LOG_MAX_SIZE}
+        max-file: "${LOG_MAX_FILES}"

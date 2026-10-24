@@ -1,37 +1,32 @@
 # Bezpečnost
 
-## Co je v Gitu
+## Co tento stack neotvírá
 
-`.env.example` má u tajemství a u neznámých provozních hodnot prefix `set_`. `check-env.sh` takový runtime soubor odmítne. Skutečné `PG_PASS` a `AUTHENTIK_SECRET_KEY` vzniknou až v `/docker-data/stacks/authentik-netcup/.env`.
+- PostgreSQL 5432, Redis 6379 a PHP-FPM 9000 nemají `ports` v Compose.
+- Nginx nenaslouchá na `0.0.0.0`. Adresa je v `.env` a `check-env.sh` odmítne `0.0.0.0`, loopback i placeholder.
+- Docker socket se nemountuje. Traefik ani Caddy v tomto projektu nejsou.
+- Redis má heslo v `runtime/redis.conf` s oprávněním `600`, ne na příkazové řádce serveru. Politika `noeviction` chrání zámky před tichým vymazáním.
+- Všechny služby mají `no-new-privileges`. Oficiální image Nextcloudu a PostgreSQL startují jako root a pak klesnou na svého uživatele; to `no-new-privileges` umožňuje.
+- Runtime `.env` je jen v `/docker-data/stacks/nextcloud-gr/.env`, mód `600`, a `.gitignore` ho vylučuje.
 
-Do dokumentace, Compose ani example nepatří produkční heslo, SMTP heslo ani secret key.
+## Proxy
 
-## Síťové publikování
+`TRUSTED_PROXIES` je seznam CIDR oddělený mezerami. Nextcloud ho čte z proměnné image a Nginx z vygenerovaného `real-ip.conf`. Veřejný protokol je `https` přes `OVERWRITEPROTOCOL`, i když spojení Traefik → Nginx je HTTP. `fastcgi_param HTTPS` se zapíná jen když `X-Forwarded-Proto` je `https`.
 
-Authentik HTTP je navázaný na `10.10.10.100:9000`, ne na `0.0.0.0`. PostgreSQL a worker port na hostitele nepublikují. HTTPS port kontejneru `9443` také ne. TLS končí na Traefiku v Infrastructure-netcup.
+HSTS se na tomto Nginxu nenastavuje. Má ho nastavit Traefik, který TLS ukončuje.
 
-Firewall, který má přímý přístup na `10.10.10.100:9000` omezit, je věc Infrastructure-netcup. Tento repozitář ho nemění.
+## Tajemství
 
-## Trusted proxy
+Generovaná hesla se do dokumentace ani do logů nedávají. `BACKUP_AGE_RECIPIENT` je veřejný příjemce. Soubor identity `AGE-SECRET-KEY` do `.env`, Gitu, stacku ani archivu nepatří. `RESTIC_PASSWORD` je v `.env`; další kopie musí být offline, jinak ztráta disku s `.env` znamená ztrátu přístupu k restic repozitáři.
 
-`AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS` nahrazuje výchozí seznam authentiku. Hodnota v example je placeholder, protože adresa, ze které Traefik na publikovaný port skutečně přichází, nebyla z tohoto checkoutu pozorována. Dokud v runtime `.env` není konkrétní CIDR, `deploy.sh` neprojde validací.
+`docker inspect` u kontejnerů Nextcloudu a Redis heslo uvidí, protože ho oficiální image čte z prostředí. To je hranice tohoto návrhu. Soubory se do Gitu neukládají.
 
-Nastavte jen síť, ze které se Traefik připojuje přímo k Authentiku. Ne celou síť klientů.
+## Stará data
 
-## Outpost a Docker socket
+Nový stack starý datový adresář nemountuje. `NEXTCLOUD_SOURCE_DATA_DIR` je jen informace pro migraci. Compose ho nepoužívá. Stejný adresář nesmí být zároveň zapisovatelný ve staré i nové instanci.
 
-Embedded outpost je součást serveru a používá `AUTHENTIK_SECRET_KEY`. Samostatný kontejner outpostu se nenasazuje. Worker proto nedostává Docker socket a neběží jako root. `AUTHENTIK_OUTPOSTS__DISCOVER=false`, aby worker nehledal Docker ani Kubernetes integraci pro cizí outposty.
+MariaDB adresář `/SDD/nvme-1T-btrf/nextcloud_gregor/mariadb/db_data` nelze zadat jako PostgreSQL ani jako data Nextcloudu. `check-env.sh` ho odmítne.
 
-## SMTP a hlášení chyb
+## Upgrade
 
-SMTP host, uživatel, heslo a odesílatel jsou placeholdery, dokud se nedoplní. `AUTHENTIK_ERROR_REPORTING__ENABLED=false`, aby se reporty neposílaly ven. Časová zóna hostitele se do kontejnerů Authentiku nemountuje; upstream u toho popisuje rozbití OAuth a SAML.
-
-## Zálohy
-
-Trvalý archiv je `tar.gz.age` zašifrovaný veřejným `BACKUP_AGE_RECIPIENT`. Příkaz `age` musí být nainstalovaný v cílovém Debian 13 kontejneru. Bez příjemce nebo bez funkčního šifrování se běh neoznačí za úspěšnou zálohu. Kopie jde do `/backups` jen když je to připojený mountpoint mód `700`. Archiv a checksum v cíli mají mód `600`. Úspěch je ověřená kopie na připojeném hostitelském adresáři VPS, ne záloha na jiném disku a ne přenos na jiný server. Soukromá identita se neukládá do Gitu, do stacku, do dat, do archivu ani do adresáře záloh a při záloze se nečte. Při obnově musí být soubor identity, mód `600` nebo `400`, dostupný mimo tato místa a předá se jen jako `--identity`. Lokální adresář `/docker-data/backups/authentik-netcup` má mód `700`. `/docker-data/authentik-netcup` mód `700` nedostává, aby do podadresářů mohli PostgreSQL UID `70` a Authentik UID `1000`. Není v `DEPLOY_ITEMS`. Obnovení chce `--confirm authentik-netcup` a bez `--replace-data` data nepřepisuje.
-
-Dump, `stack.env` a manifest vznikají rovnou s módem `600` ve staging adresáři `700`. Samostatný plaintext tar se nezapisuje: `tar` jde proudem do `age`. `shred` stagingu je potom jen nejlepší úsilí: na SSD, na copy-on-write souborovém systému a ve snímcích nezaručuje zmizení dat. Pád nebo `SIGKILL` může nešifrovaný staging nechat na disku.
-
-## Dockge
-
-`deploy.sh` Dockge nezastavuje a nemaže. `install-dockge.sh` skončí chybou dřív, než by sáhl na kontejner. Port Dockge `5001` tento projekt nemění.
+Běžný deploy neumí tiše vyměnit hlavní verzi. Selhaný upgrade nespouští starou image nad databází, která už mohla být migrovaná. Zámek `state/upgrade.lock` pak blokuje další `deploy.sh`, dokud ho správce po obnově nebo vědomém rozhodnutí nesmaže.

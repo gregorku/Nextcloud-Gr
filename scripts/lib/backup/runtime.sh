@@ -2,35 +2,21 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
 # File:
 #   scripts/lib/backup/runtime.sh
 #
 # Description:
-#   Stop Authentik server and worker for the duration of a backup, then
-#   start only the containers this backup stopped.
-#
-#   PostgreSQL stays running. pg_dump and the file copy then see one
-#   quiet moment. HTTP on AUTHENTIK_HOST_IP:AUTHENTIK_HTTP_PORT is down
-#   while those steps run.
+#   Stop cron before maintenance mode, then keep PostgreSQL running
+#   so pg_dump can read it. Only cron that this script stopped is
+#   started again.
 #
 ###############################################################################
 
-BACKUP_STOPPED_SERVER=no
-BACKUP_STOPPED_WORKER=no
+BACKUP_STOPPED_CRON=no
+BACKUP_MAINTENANCE_ON=no
 BACKUP_RESUMED=no
-
-###############################################################################
-# Stop one container and return its status
-#
-# Arguments:
-#   $1 - Container name
-#
-# The status is checked explicitly. Callers use this from a backup trap,
-# where set -e does not stop the script on a failed command.
-#
-###############################################################################
 
 backup_stop_container()
 {
@@ -41,14 +27,6 @@ backup_stop_container()
     fi
 }
 
-###############################################################################
-# Start one container and return its status
-#
-# Arguments:
-#   $1 - Container name
-#
-###############################################################################
-
 backup_start_container()
 {
     local name="$1"
@@ -58,85 +36,78 @@ backup_start_container()
     fi
 }
 
-###############################################################################
-# Stop server and worker when they are running
-###############################################################################
+backup_enter_maintenance()
+{
+    nextcloud_maintenance on
+}
+
+backup_leave_maintenance()
+{
+    nextcloud_maintenance off
+}
 
 backup_quiesce_writers()
 {
-    BACKUP_STOPPED_SERVER=no
-    BACKUP_STOPPED_WORKER=no
+    BACKUP_STOPPED_CRON=no
+    BACKUP_MAINTENANCE_ON=no
     BACKUP_RESUMED=no
 
-    if docker_container_running "${AUTHENTIK_SERVER_CONTAINER}"; then
+    if docker_container_running "${NEXTCLOUD_CRON_CONTAINER}"; then
+        info "Stopping ${NEXTCLOUD_CRON_CONTAINER} before maintenance mode."
 
-        info "Stopping ${AUTHENTIK_SERVER_CONTAINER}. Authentik HTTP on ${AUTHENTIK_HOST_IP}:${AUTHENTIK_HTTP_PORT} is unavailable until this backup finishes."
+        backup_stop_container "${NEXTCLOUD_CRON_CONTAINER}" \
+            || fail "Could not stop ${NEXTCLOUD_CRON_CONTAINER}. Backup was not started."
 
-        backup_stop_container "${AUTHENTIK_SERVER_CONTAINER}" \
-            || fail "Could not stop ${AUTHENTIK_SERVER_CONTAINER}. Backup was not started."
-
-        BACKUP_STOPPED_SERVER=yes
-
-        ok "Stopped ${AUTHENTIK_SERVER_CONTAINER}."
+        BACKUP_STOPPED_CRON=yes
+        ok "Stopped ${NEXTCLOUD_CRON_CONTAINER}."
     else
-        info "${AUTHENTIK_SERVER_CONTAINER} is already stopped. This backup will not start it."
+        info "${NEXTCLOUD_CRON_CONTAINER} is already stopped. This backup will not start it."
     fi
 
-    if docker_container_running "${AUTHENTIK_WORKER_CONTAINER}"; then
+    backup_enter_maintenance \
+        || fail "Could not enable maintenance mode. Backup was not started."
 
-        info "Stopping ${AUTHENTIK_WORKER_CONTAINER} so persistent files are copied while Authentik is not writing them."
-
-        backup_stop_container "${AUTHENTIK_WORKER_CONTAINER}" \
-            || fail "Could not stop ${AUTHENTIK_WORKER_CONTAINER}. Backup was not started."
-
-        BACKUP_STOPPED_WORKER=yes
-
-        ok "Stopped ${AUTHENTIK_WORKER_CONTAINER}."
-    else
-        info "${AUTHENTIK_WORKER_CONTAINER} is already stopped. This backup will not start it."
-    fi
+    BACKUP_MAINTENANCE_ON=yes
+    ok "Nextcloud maintenance mode is on."
 }
-
-###############################################################################
-# Start containers this backup stopped
-###############################################################################
 
 backup_resume_writers()
 {
     local status=0
 
-    if [[ "${BACKUP_STOPPED_SERVER}" == "yes" ]]; then
-
-        if ! backup_start_container "${AUTHENTIK_SERVER_CONTAINER}"; then
-            warn "Could not start ${AUTHENTIK_SERVER_CONTAINER}."
+    if [[ "${BACKUP_STOPPED_CRON}" == "yes" ]]; then
+        if ! backup_start_container "${NEXTCLOUD_CRON_CONTAINER}"; then
+            warn "Could not start ${NEXTCLOUD_CRON_CONTAINER}."
             status=1
         else
-            ok "Started ${AUTHENTIK_SERVER_CONTAINER}."
+            ok "Started ${NEXTCLOUD_CRON_CONTAINER}."
         fi
     fi
 
-    if [[ "${BACKUP_STOPPED_WORKER}" == "yes" ]]; then
-
-        if ! backup_start_container "${AUTHENTIK_WORKER_CONTAINER}"; then
-            warn "Could not start ${AUTHENTIK_WORKER_CONTAINER}."
+    if [[ "${BACKUP_MAINTENANCE_ON}" == "yes" ]]; then
+        if ! backup_leave_maintenance; then
+            warn "Could not leave maintenance mode."
             status=1
         else
-            ok "Started ${AUTHENTIK_WORKER_CONTAINER}."
+            BACKUP_MAINTENANCE_ON=no
+            ok "Maintenance mode is off."
         fi
     fi
 
     return "${status}"
 }
 
-###############################################################################
-# Resume once, including from the EXIT trap
-###############################################################################
-
 backup_finish_writers()
 {
     local status=0
 
     if [[ "${BACKUP_RESUMED}" == "yes" ]]; then
+        return 0
+    fi
+
+    if [[ "${BACKUP_HOLD_QUIESCE:-no}" == "yes" && "${BACKUP_QUIESCE_HOLD_READY:-no}" == "yes" ]]; then
+        BACKUP_RESUMED=yes
+        info "Maintenance mode stays on and cron stays stopped for upgrade.sh."
         return 0
     fi
 

@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
-# Verify that the Authentik HTTP backend is bound only to the Incus
-# container IP. PostgreSQL has no published host port.
+# Verify that Nginx is bound only to the configured private address.
+# PostgreSQL, Redis and PHP-FPM have no published host port.
 #
-# Authentication of the public name auth.serveftp.org is handled by
-# Infrastructure-netcup Traefik, not by this project.
+# Public TLS for gregor.serveftp.org stays on Infrastructure-netcup
+# Traefik.
 #
 ###############################################################################
 
@@ -19,29 +19,23 @@ test_backend_security()
     local host
     local port
 
-    host="$(env_get AUTHENTIK_HOST_IP)"
-    port="$(env_get AUTHENTIK_HTTP_PORT)"
+    host="$(env_get NEXTCLOUD_BACKEND_BIND)"
+    port="$(env_get NEXTCLOUD_BACKEND_PORT)"
 
     docker ps --format '{{.Ports}}' \
         | grep -Eq "(^|, )${host}:${port}->" \
         || fail "Port ${port} is not bound to ${host}."
 
-    ok "Authentik HTTP is bound to ${host}:${port}."
+    ok "Nginx HTTP is bound to ${host}:${port}."
 
     if docker ps --format '{{.Names}} {{.Ports}}' \
-        | grep -E "${POSTGRESQL_CONTAINER}" \
-        | grep -Eq '[0-9]+:5432->'; then
+        | grep -E "${POSTGRESQL_CONTAINER}|${REDIS_CONTAINER}|${NEXTCLOUD_APP_CONTAINER}" \
+        | grep -Eq '[0-9]+:(5432|6379|9000)->'; then
 
-        fail "PostgreSQL port 5432 is published."
+        fail "PostgreSQL, Redis or PHP-FPM publishes a host port."
     fi
 
-    ok "PostgreSQL has no published host port."
-
-    if docker ps --format '{{.Ports}}' | grep -Eq '9443->'; then
-        fail "Authentik HTTPS port 9443 must not be published."
-    fi
-
-    ok "Port 9443 is not published."
+    ok "PostgreSQL, Redis and PHP-FPM have no published host port."
 
     log_info "Public TLS and routing stay in Infrastructure-netcup Traefik."
 }

@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup
+# Nextcloud-Gr
 #
 # File:
 #   scripts/update-env.sh
@@ -70,7 +70,7 @@ source "${SCRIPT_DIR}/lib/env/load.sh"
 show_help()
 {
 cat <<EOF
-Authentik-netcup Project
+Nextcloud-Gr
 
 Usage:
 
@@ -84,7 +84,10 @@ Description:
     framework values are taken from the example.
     user values already set are kept.
     generated secrets are created only when missing or still set_*.
-    An existing AUTHENTIK_SECRET_KEY is not rotated.
+    An existing PG_PASS, REDIS_PASSWORD, NEXTCLOUD_ADMIN_PASSWORD or
+    RESTIC_PASSWORD is not rotated. Changing NEXTCLOUD_TAG in the
+    example does not upgrade Nextcloud. deploy.sh refuses a tag that
+    differs from state/installed-version and points to upgrade.sh.
 
     Run ./scripts/init.sh first so the example exists in the stack
     directory. Then edit the remaining placeholders and run

@@ -1,132 +1,73 @@
-# Záloha a obnovení
+# Záloha a obnova
 
-## Šifrování
+Postup odpovídá dokumentaci Nextcloudu:
 
-Trvalý archiv je soubor `tar.gz.age`. Šifruje ho [age](https://github.com/FiloSottile/age) pro veřejného příjemce `BACKUP_AGE_RECIPIENT` v runtime `.env`. Příjemce je `age1…` nebo veřejný SSH klíč.
+- https://docs.nextcloud.com/server/stable/admin_manual/maintenance/backup.html
+- https://docs.nextcloud.com/server/stable/admin_manual/maintenance/restore.html
 
-Příkaz `age` musí být nainstalovaný v cílovém Debian 13 kontejneru. Statický test na pracovní stanici přítomnost `age` v tom kontejneru neověřuje.
+Jedna obnova potřebuje databázi, `config`, `custom_apps`, `themes` a uživatelská data ze stejného okamžiku. Jádro Nextcloudu je v připnutém image, ne v archivu.
 
-Soukromý klíč (`AGE-SECRET-KEY-…`) se neukládá do Gitu, do archivu, do stacku, do `DATA_DIR` ani do lokálního adresáře záloh. V okamžiku obnovy musí být soubor identity bezpečně dostupný mimo tato místa a předá se jen jako `--identity`. Mód souboru je `600` nebo `400`. `age` ho čte přes deskriptor souboru, ne jako argument příkazu.
+## Dva nástroje
 
-Když je `BACKUP_AGE_RECIPIENT` prázdný, nebo když v kontejneru není příkaz `age`, `backup.sh` archiv nezapíše a tento běh není bezpečná externí záloha.
+Age archiv v `/docker-data/backups/nextcloud-gr` je malý. Obsahuje:
 
-## Dočasný plaintext
+- `postgresql/nextcloud.dump`, custom formát `pg_dump -Fc`
+- `nextcloud/config`, `custom_apps`, `themes`
+- `nextcloud/app-list.txt`
+- `stack.env`
+- `manifest.txt` s tagem, hlavní verzí PostgreSQL, sha256 souborů a id restic snapshotu
 
-Před šifrováním vznikne v `mktemp -d` (mód `700`) staging adresář. V něm jsou:
+Uživatelský adresář se do tohoto taru nedává. `restic` ho zálohuje inkrementálně a šifrovaně. Manifest drží obě id snapshotu pořízeného ve stejném okně, pokud se liší: `restic_snapshot_id` ve zdrojovém repozitáři a `restic_external_snapshot_id` v cílovém. Pořadí je: nejdřív se zastaví cron, potom se zapne maintenance mode, potom dump, potom kopie malých stromů, potom restic. Teprve potom se maintenance vypne a cron vrátí, pokud je `--hold` vypnutý.
 
-- `postgresql/authentik.dump`, založený přes `install -m 600` a teprve potom plněný výstupem `pg_dump`;
-- kopie `authentik/data`, `authentik/templates` a `authentik/certs`, každý soubor založený jako `600`;
-- `stack.env`, kopie runtime `.env` přes `install -m 600`;
-- `manifest.txt`, založený jako `600`.
+Archiv bez čitelného restic snapshotu není kompletní záloha. `restore.sh` před jakoukoliv změnou živých dat ověří, že repozitář jde otevřít, že snapshot v manifestu existuje a že `restic ls` jeho strom přečte. Dump, který nezačíná `PGDMP` nebo obsahuje stopu MariaDB, se nenačte. Hlavní verze PostgreSQL v manifestu musí být 18. Přepínač `--allow-version-mismatch` umí jen rozdílný tag Nextcloudu, ne jinou databázi.
 
-`umask 077` je nastavený na začátku `backup.sh` a `restore.sh`. Skript po sestavení stromu mód zkontroluje a při jiném módu archiv nezapíše. Pozdější `chmod` tuto kontrolu nenahrazuje.
+## Lokální a externí záloha
 
-Samostatný `plain.tar.gz` se nezakládá. Po kontrole stagingu jde `tar` na standardní výstup a `age` šifruje tento proud do dočasného `.age` souboru. `pipefail` hlídá návratový kód `tar` i `age`. Konečný archiv v adresáři záloh vznikne až po úspěchu celé pipeline a po ověření součtu toho dočasného souboru. Při chybě se neúplný `.age` smaže a běh není úspěšná záloha. Soukromá identita se při záloze nepoužívá. Obnova dál čte jen `.tar.gz.age`.
+Lokální restic repozitář na stejném filesystému jako data, a age archiv v `/docker-data/backups/nextcloud-gr`, jsou bod obnovy na tomto stroji. Nejsou to záloha proti ztrátě disku. Samotný soubor `.tar.gz.age` uživatelské soubory neobsahuje. Jeho zkopírování bez odpovídajícího restic snapshotu `backup.sh` neoznačí jako kompletní zálohu.
 
-Když je k dispozici `shred`, skript jím soubory ve stagingu jednou přepíše a smaže jejich jméno. To je nejlepší úsilí. `shred` nezaručuje, že data zmizela z SSD, z copy-on-write souborového systému ani ze snímku disku. Při pádu procesu nebo při `SIGKILL` se úklid nespustí a nešifrovaný staging může na disku zůstat. Bez `shred` se soubor jen odlinkuje.
+Kompletní externí záloha je age archiv (dump, config, custom apps, themes, manifest a id snapshotu) a zároveň čitelný restic snapshot na odděleném úložišti. To splní jedna ze dvou cest:
 
-Kontrolní součet `.sha256` patří šifrovanému souboru.
+- `RESTIC_REPOSITORY` je vzdálené schéma `sftp`, `rest`, `s3`, `rclone`, `azure`, `gs`, `b2` nebo `swift`. Snapshot se ověřuje přímo v něm.
+- `RESTIC_REPOSITORY` je lokální cesta a `BACKUP_EXTERNAL_DIR` je mountpoint na jiném zařízení. `backup.sh` snapshot přenese příkazem `restic copy` do podadresáře `restic`. Text příkazu `restic copy` se jako id nepoužije. Skutečné id se přečte z `snapshots --json` cílového repozitáře podle stromu, času a hostname a ověří se `cat`, `snapshots` a `ls`. Toto id může být jiné než id ve zdrojovém repozitáři. Manifest v age archivu proto má `restic_snapshot_id` a `restic_external_snapshot_id`. Teprve potom se na stejný mount zkopíruje age archiv. Na tom mountu musejí být obě části: šifrovaný archiv i restic snapshot s uživatelskými soubory.
 
-## Co záloha obsahuje
+`BACKUP_EXTERNAL_DIR` se použije jen když je cesta sama mountpoint a mód `700`. Běžný adresář stejného jména nestačí. Prázdná hodnota u lokálního restic repozitáře znamená, že kompletní externí záloha nevznikla.
 
-`./scripts/backup.sh` v kontejneru:
+## Klíče a retence
 
-1. ověří příjemce a přítomnost `age` ještě před zastavením Authentiku;
-2. ověří, že `authentik-postgresql` běží a healthcheck je `healthy`;
-3. zastaví `authentik-server` a `authentik-worker`, pokud běží;
-4. udělá `pg_dump -Fc` lokálním socketem uživatele `postgres` uvnitř kontejneru;
-5. zkopíruje `authentik/data`, `authentik/templates` a `authentik/certs`;
-6. přidá kopii runtime `.env` jako `stack.env`;
-7. zapíše `manifest.txt`, ověří mód `700`/`600` a teprve potom dump, adresáře a `AUTHENTIK_SECRET_KEY`;
-8. pošle `tar` ze stagingu na standardní výstup do `age` a zapíše dočasný `.age` soubor;
-9. po úspěchu pipeline a po ověření jeho součtu teprve uloží konečný šifrovaný archiv;
-10. spustí jen ty kontejnery Authentiku, které tento běh zastavil.
+`BACKUP_AGE_RECIPIENT` je veřejný klíč. Privátní identita (`AGE-SECRET-KEY`) se předává jen `restore.sh --identity` a musí mít mód `600` nebo `400`. Nepatří do archivu, do Gitu ani jen na disk, který záloha chrání. Bez ní age archiv neotevřete, i když leží vedle dat.
 
-Adresář dat PostgreSQL se nekopíruje. Konzistentní obraz databáze je dump.
+`RESTIC_PASSWORD` otevírá zdrojový i externí restic repozitář. Vznikne v runtime `.env`. Další kopie musí být offline a mimo zálohované zařízení. Heslo v `.env` na stejném disku jako data po ztrátě toho disku nepomůže. `stack.env` uvnitř age archivu heslo obsahuje, ale k jeho přečtení je zase potřeba privátní age klíč uložený jinde.
 
-HTTP na `10.10.10.100:9000` je po dobu dumpu a kopírování nedostupné. PostgreSQL zůstává spuštěná. Když server nebo worker před zálohou neběžel, skript ho po sobě nespouští.
+K obnově tedy potřebujete tři věci, které nesmějí zůstat jen na zálohovaném disku: age archiv, privátní age klíč a `RESTIC_PASSWORD`. `PG_PASS`, `REDIS_PASSWORD` a `RESTIC_PASSWORD` v běžícím `.env` se při obnově nepřepisují, protože musejí dál sedět na běžící PostgreSQL, Redis a na repozitář, ze kterého se čte. `NEXTCLOUD_ADMIN_PASSWORD` v archivu obnovuje heslo v `.env`; účinné heslo účtu je v databázi.
 
-Archiv:
+Retence ve zdrojovém repozitáři je `RESTIC_KEEP_DAILY=7`, `WEEKLY=4`, `MONTHLY=6`, `YEARLY=1`. Nový snapshot má navíc vlastní tag, aby ho `forget` hned nesmazal. `BACKUP_EXTERNAL_DIR` na stejném zařízení jako data se jako oddělené úložiště nepočítá.
 
-```text
-/docker-data/backups/authentik-netcup/authentik-netcup-YYYYMMDD-HHMMSS.tar.gz.age
-```
-
-Tento adresář leží na disku Incus kontejneru. Ani šifrovaný soubor v něm není záloha mimo kontejner.
-
-## Ostrá záloha
-
-`BACKUP_EXTERNAL_DIR` je `/backups`. V kontejneru je to Incus diskové zařízení z hostitelského VPS. `df` a `stat` na něm ukazují stejné zařízení jako u `/docker-data`. Rozdíl je mountpoint: `/backups` je připojený mount, lokální adresář záloh není.
-
-`check-env.sh` prázdný `BACKUP_AGE_RECIPIENT` i prázdný `BACKUP_EXTERNAL_DIR` přijme. Prázdný příjemce znamená, že `backup.sh` archiv nezapíše. Prázdný cíl znamená, že šifrovaný soubor zůstane jen v lokálním adresáři na disku kontejneru.
-
-Pro kopii na hostitelský adresář musí být v runtime `.env` veřejný příjemce `BACKUP_AGE_RECIPIENT` (`age1…` nebo veřejný SSH klíč) a `/backups` musí být skutečně připojený mountpoint s módem `700`. Soukromá identita (`AGE-SECRET-KEY-…`) do příjemce nepatří. Zůstává odděleně mimo Git, stack, `DATA_DIR` a `/docker-data/backups/authentik-netcup`. `backup.sh` ji nečte. Obnova ji dostane jen jako `--identity`, v souboru s módem `600` nebo `400`.
-
-`backup.sh` při prázdném příjemci, při soukromém klíči na místě příjemce, nebo když v kontejneru chybí příkaz `age`, archiv nezapíše a běh není úspěšná záloha.
-
-Úspěch kopie znamená ověřený soubor `.tar.gz.age` a jeho `.sha256` na připojeném hostitelském adresáři VPS. Není to záloha na jiném disku. Není to přenos na jiný server. Ten přenos dělá později jiný program a tento repozitář ho neprovádí.
-
-## Kopie na `/backups`
-
-Cesta se vezme přes `realpath`. Musí to být existující adresář, vlastněný uživatelem, který zálohu spouští, mód `700`, a nesmí být v Gitu, ve stacku, v datech ani v lokálních zálohách. Skript adresář nevytváří a mód `700` mu sám nenastavuje.
-
-Mountpoint se čte z `findmnt` a z `/proc/self/mountinfo`. Obě tabulky se musí shodovat a `mountpoint` musí potvrdit, že cílem je přímo tento mount, ne adresář uvnitř jiného mountu. Číslo zařízení se nepoužívá. Stejné zařízení jako `/docker-data` je u tohoto Incus bind mountu očekávané.
-
-Když `/backups` není připojené, nebo když na kořenovém souborovém systému kontejneru leží jen obyčejný adresář stejného jména, `backup.sh` skončí chybou a do toho adresáře nezapíše.
-
-Po zápisu mají archiv i checksum mód `600`. Kontrolní součet se ověřuje až na souborech v cílovém adresáři. Teprve potom se vypíše ověřená kopie na připojeném hostitelském adresáři.
-
-## Obnovení
-
-Nejdřív ověření bez zápisu. Součet šifrovaného souboru se kontroluje před dešifrováním:
+## Obnova
 
 ```bash
 ./scripts/restore.sh \
-  --archive /docker-data/backups/authentik-netcup/authentik-netcup-YYYYMMDD-HHMMSS.tar.gz.age \
-  --identity /cesta/mimo/stack/authentik.agekey \
-  --confirm authentik-netcup
+  --archive /docker-data/backups/nextcloud-gr/nextcloud-gr-CAS.tar.gz.age \
+  --identity /cesta/mimo/git/age.key \
+  --confirm nextcloud-gr
 ```
 
-Exit code `2` znamená, že šifrovaný archiv, manifest, dump, persistentní adresáře i `AUTHENTIK_SECRET_KEY` sedí a persistentní data se nezměnila.
+Bez `--replace-data` se nic nezmění a návratový kód je 2.
 
-Zápis:
+S `--replace-data` musí být zastavené kontejnery `nextcloud-gr-app` a `nextcloud-gr-cron`. PostgreSQL musí běžet a být healthy. Skript nejdřív ověří šifru, manifest a dump. Restic snapshot ověří v repozitáři z `RESTIC_REPOSITORY` a teprve potom uloží rollback. `PG_PASS`, `REDIS_PASSWORD` a `RESTIC_PASSWORD` se z archivu neberou, protože musí dál sedět na běžící PostgreSQL, Redis a repozitář. Obnoví se `NEXTCLOUD_ADMIN_PASSWORD` v `.env`; účinné heslo účtu je v obnovené databázi.
 
-```bash
-./scripts/restore.sh \
-  --archive /docker-data/backups/authentik-netcup/authentik-netcup-YYYYMMDD-HHMMSS.tar.gz.age \
-  --identity /cesta/mimo/stack/authentik.agekey \
-  --confirm authentik-netcup \
-  --replace-data
-```
+Nový manifest má `restic_snapshot_id` a může mít jiné `restic_external_snapshot_id`. Obnova použije jen to id, které v nakonfigurovaném repozitáři projde `cat`, `snapshots` a `ls`. Když jsou v jednom repozitáři obě a liší se, skript skončí chybou a nic nevybere.
 
-Před `--replace-data`:
+## Starší manifest
 
-- `authentik-server` a `authentik-worker` jsou zastavené;
-- `authentik-postgresql` běží a je healthy;
-- `AUTHENTIK_TAG` v `.env` je stejný jako `authentik_tag` v manifestu.
+Manifest zapsaný před tímto rozlišením má jen `restic_snapshot_id`. Nemá `restic_external_snapshot_id`, strom, čas snapshotu ani hostname. Pole `created_at` je čas skriptu před spuštěním resticu, ne čas snapshotu, a k hledání se nepoužívá.
 
-`--confirm` musí být přesně `authentik-netcup`.
+- Obnova ze zdrojového repozitáře, ve kterém to původní id pořád je: skript ho ověří a použije. Jiná id v tom repozitáři neprohlíží.
+- Obnova z externí kopie, ve které `restic copy` uložil snapshot pod jiným id: dohledat ho nejde. Skript nesáhne na nejnovější snapshot ani na jiného kandidáta a skončí bez změny živých dat. Takovou starší zálohu z externí kopie nemusí být možné obnovit.
 
-Po dešifrování do adresáře `700` se kontroluje neprázdný `postgresql/authentik.dump`, adresáře `authentik/data`, `authentik/templates` a `authentik/certs`, manifest a použitelný `AUTHENTIK_SECRET_KEY`. Teprve potom se do `BACKUP_LOCAL_DIR` zapíše rollback. Jakmile adresář snímku vznikne, při nečekaném konci se nesmaže. Před první `rm` živých dat je snímek ověřený a tento režim už platí.
+Kdyby manifest přece jen obsahoval strom, přesný čas snapshotu a hostname, smí se použít jen při jediné shodě a po stejném ověření snapshotu. Víc shod nebo chybějící údaj je chyba. Dnešní ani starší archiv tato tři pole nezapisuje, takže tahle cesta pro ně neplatí.
 
-Snímek obsahuje tři adresáře, kopii `.env` a `pg_dump` současné databáze. Pak se nahradí soubory, v `.env` jen řádek `AUTHENTIK_SECRET_KEY` a nakonec `pg_restore --single-transaction`. Ostatní řádky `.env` zůstávají. Před zápisem klíče vznikne `.env.bak-*` s módem `600`.
+Když obnova selže, vrátí se předchozí soubory, heslo v `.env` a dump. Když selže i návrat, skript nesmí hlásit úspěch a vypíše cestu ke snímku. Nextcloud se v tom stavu nespouští.
 
-Úspěch se vypíše až po porovnání souborů, shodě klíče a healthy PostgreSQL. Snímek se maže až potom. Když se snímek po ověřené obnově nesmaže, úspěch se nevyhlásí.
+Datový adresář, který není sám mountpoint, restic obnoví do sousedního adresáře a pak ho přejmenuje. Mountpoint přejmenovat nejde, proto `check-env.sh` vyžaduje adresář uvnitř disku. Po obnově dat spusťte `occ files:scan`.
 
-`SIGTERM`, `SIGINT` a `SIGHUP` spustí jeden pokus o návrat, pokud už živá data mohla být změněná. Snímek zůstane. `SIGKILL` zachytit nelze: automatický návrat neproběhne a snímek zůstane na disku právě proto, aby šel návrat udělat ručně.
-
-## Když obnova nedoběhne
-
-Authentik nespouštějte, dokud soubory, klíč a databáze znovu nesedí.
-
-- Skript sám vrátil stav a skončil chybou. Snímek je v `BACKUP_LOCAL_DIR/rollback.*`. Je to kopie stavu před obnovou, ne druhá šifrovaná záloha.
-- Návrat selhal. Ve zprávě je cesta ke snímku. Nejdřív vraťte `authentik/data`, `templates`, `certs` a řádek `AUTHENTIK_SECRET_KEY` ze `runtime.env` ve snímku. Teprve potom načtěte `postgresql/authentik.dump` ze snímku do běžící PostgreSQL.
-- `SIGKILL` uprostřed zápisu. Snímek na disku je, automatický návrat ne. Živé adresáře mohou být prázdné nebo smíchané s archivem, klíč v `.env` může být nový a databáze ještě starý, nebo naopak. Stejný ruční postup: soubory a klíč ze snímku, potom dump ze snímku. Dokud to nesedí, server a worker nechte zastavené.
-
-Klíč a dump jsou svázané tím, že byly v jednom archivu se součty. Skript nezkouší, že klíč dešifruje řádky v databázi.
-
-`--allow-version-mismatch` obnovu povolí i při jiném tagu. Bez ověřeného důvodu ho nepoužívejte.
-
-## Test bez produkčních dat
-
-`./scripts/test.sh --static` v dočasných adresářích pouští skutečné `age`, `install`, `tar` a `sha256sum`, když jsou na stroji, a u souborů čte `stat`. `pg_dump`, `pg_restore` a Docker při tom nespouští. Zastavení kontejnerů a načtení databáze jsou v příslušných testech nahrazené funkce. `SIGTERM` dostane pomocný proces, ne produkční `restore.sh`. Rozpoznání mountpointu se zkouší v soukromém mount namespace na dočasném bind mountu. Produkční `/backups` ani disk VPS se nepřipojuje. Obyčejný adresář na stejném zařízení se dál odmítá. Kontrola `shred` ověřuje jen to, že jméno souboru zmizelo. Neověřuje, že bloky na SSD nebo na copy-on-write souborovém systému jsou pryč.
+Rollback snímek v `BACKUP_LOCAL_DIR/rollback.*` mažte až po kontrole, že instance naběhla.

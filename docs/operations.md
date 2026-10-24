@@ -1,78 +1,70 @@
 # Provoz
 
-Příkazy patří do kontejneru `10.10.10.100` a spouštějí se jako root. Z pracovního checkoutu na stanici se nenasazuje.
+Skripty se spouštějí jako root v Incus kontejneru, ve kterém už běží Docker a Dockge. Vytvoření kontejneru, disk device a síť device je práce správce mimo tento repozitář.
 
-## init.sh
+## Před init.sh
 
-Ověří root, `git` a `rsync`. Pak:
-
-1. vytvoří `/docker-data/authentik-netcup` přes `mkdir -p` a mód `700` na tento adresář ani na jeho podstrom nenastaví. Adresář vlastní root. Průchod pro ostatní, který u rootu s `umask 022` dává `mkdir` jako mód `755`, potřebují PostgreSQL UID `70` a Authentik UID `1000`, aby se dostaly do svých podadresářů;
-2. vytvoří `/docker-data/backups/authentik-netcup` a mód `700` nastaví jen jemu. Čte a zapisuje ho root při záloze;
-3. zkopíruje `DEPLOY_ITEMS` do `/docker-data/stacks/authentik-netcup` a u každé položky nahradí předchozí obsah;
-4. vytvoří Docker síť `authentik-netcup`, pokud chybí;
-5. nastaví vlastníka `70:70` u `postgresql` a `1000:1000` u `authentik/data`, `authentik/templates` a `authentik/certs`. `chown` mód nadřazeného `/docker-data/authentik-netcup` nemění.
-
-`.env` v tomto kroku nevzniká. Kontejnery se nespouštějí.
-
-`rsync --delete` se při init nepoužívá. Mazání je `rm -rf` jen na cestě `STACK_DIR/<položka>`. Cesta se před smazáním musí vejít do stacku.
-
-## update-env.sh
-
-Čte `.env.example` už zkopírovaný ve stacku. Poprvé z něj vytvoří `.env`, potom ho sesynchronizuje.
-
-| Politika | Chování |
-| --- | --- |
-| `framework` | hodnota z `.env.example` |
-| `user` | neprázdná hodnota v `.env` zůstane |
-| `generated` | skutečné tajemství zůstane; `set_*` nebo prázdná hodnota se jednou vygeneruje |
-
-Generování odpovídá dokumentaci authentik: `openssl rand -base64 36` pro `PG_PASS` a `openssl rand -base64 60` pro `AUTHENTIK_SECRET_KEY`. Hodnota se nevypisuje. Existující klíč se při další synchronizaci nemění, protože jeho výměna ruší sessions.
-
-Před zápisem vznikne `/docker-data/stacks/authentik-netcup/.env.bak-YYYYMMDD-HHMMSS`. Nový soubor se zapisuje přes `.env.tmp`. `.env` i záloha mají mód `600`. Proměnná, která v `.env.example` už není, do nového souboru neprojde.
-
-`openssl` musí být v kontejneru. Bez něj `update-env.sh` tajemství nevytvoří.
-
-## check-env.sh
-
-Odmítne chybějící nebo neznámou proměnnou, placeholder `set_*`, heslo PostgreSQL delší než 99 znaků, krátký `AUTHENTIK_SECRET_KEY`, současně zapnuté `USE_TLS` a `USE_SSL`, `BACKUP_EXTERNAL_DIR`, který míří do Gitu, stacku, dat nebo lokálních záloh, a `BACKUP_AGE_RECIPIENT`, který je soukromý klíč age. Prázdný `BACKUP_EXTERNAL_DIR` a prázdný `BACKUP_AGE_RECIPIENT` validace přijme. V `.env.example` je cíl `/backups`. Prázdný příjemce znamená, že `backup.sh` archiv nezapíše. Prázdný cíl znamená, že kopie na hostitelský adresář nevznikne.
-
-## deploy.sh
-
-1. zkontroluje prostředí a Docker;
-2. sesynchronizuje `DEPLOY_ITEMS`;
-3. ověří, že položky existují v `GIT_DIR`;
-4. ověří `.env`;
-5. ověří, že kontejner `dockge` běží a `DOCKGE_STACKS_DIR` je `/docker-data/stacks`;
-6. spustí `docker compose config`;
-7. stáhne obrazy a provede `docker compose up -d`;
-8. počká, až Dockge běží.
-
-Krok 7 je jediné místo, které stahuje obrazy a startuje stack. Tento checkout ho nespouští.
-
-`rsync --delete` platí jen pro obsah `compose/` a `configs/` ve stacku. Soubor smazaný z těchto adresářů v Gitu se při dalším deployi smaže i ve stacku. `.env`, `.env.bak-*`, `/docker-data/authentik-netcup` a `/docker-data/backups/authentik-netcup` v cíli `rsync` nejsou. Když `rsync` selže, skript skončí a `cp` nespustí. `cp` se použije jen když příkaz `rsync` v systému není, a jen na cestu uvnitř stacku.
-
-## reload.sh
-
-Spustí celý `deploy.sh` a potom:
+Ověřte v kontejneru:
 
 ```bash
-docker compose up -d --force-recreate --remove-orphans
+findmnt /docker-data
+findmnt -T /cesta/k/rodici/postgresql
+findmnt -T /cesta/k/rodici/nextcloud-data
 ```
 
-`--force-recreate` vytvoří kontejnery znovu i beze změny konfigurace. `--remove-orphans` odstraní služby, které v Compose projektu už nejsou. Data v `DATA_DIR` nemaže.
+`/docker-data` musí být přímo mountpoint disku Incus, ideálně SSD/NVMe. PostgreSQL a uživatelská data musí ležet v adresáři uvnitř jiného mountu, ne na kořenovém filesystému kontejneru a ne na samotném mountpointu. Adresář dat nemá být ten, do kterého ještě zapisuje starý Nextcloud.
 
-`--pull` je přijato kvůli kompatibilitě a podruhé obrazy nestahuje. Stahování je v `deploy.sh`.
+Doporučené device v Incus, názvy upraví správce podle hostitele:
 
-Po recreate následuje `post-deploy.sh` a `test.sh`.
+| Device v kontejneru | Účel | Filesystém | Poznámka |
+| --- | --- | --- | --- |
+| `/docker-data` | stack, HTML, lokální age archivy | SSD/NVMe | musí být mountpoint |
+| rodič `POSTGRESQL_HOST_DIR` | data PostgreSQL 18 | SSD/NVMe | jiný disk než HDD s fotkami, pokud to kapacita dovolí |
+| rodič `NEXTCLOUD_DATA_HOST_DIR` | nový datadir | HDD RAID | zatím prázdný adresář |
+| zdroj migrace, read-only | staré soubory | stávající HDD | `readonly=true`, jen pro pozdější kopii |
+| volitelný backup mount | age kopie nebo restic repo | jiný disk nebo export | `backup.sh` ho přijme jen jako mountpoint |
 
-## post-deploy.sh a test.sh
+Vlastník nových prázdných adresářů: PostgreSQL `999:999`, Nextcloud `33:33`. Existující neprázdný strom skript nepřepisuje rekurzivním `chown`. Průchodnost se ověří zápisem jednoho souboru a jeho smazáním v cílovém adresáři, ne ve starých datech.
 
-`post-deploy.sh` vyžaduje běžící PostgreSQL ve stavu healthy a úspěšné `ak healthcheck` u serveru i workeru. Kontroluje také vazbu `10.10.10.100:9000`. Neúspěšný příkaz je chyba, ne přeskočený úspěch.
+Na tomto checkoutu ty mounty nejsou. Jejich filesystém, vlastníka a test zápisu musí potvrdit správce v novém kontejneru.
 
-`test.sh` bez argumentu dělá totéž v nasazeném kontejneru, včetně Dockge a existence Docker sítě.
+## Pořadí
 
-`test.sh --static` je varianta pro checkout: struktura, politika `.env.example`, odmítnutí placeholderů, statické porty, dočasný test `rsync --delete`, šifrování zálohy pomocí `age`, kontrolní součty a odmítnutí neúplné obnovy. `docker compose config` vypíše, že neběžel, pokud Docker CLI chybí.
+```bash
+./scripts/init.sh
+./scripts/update-env.sh
+./scripts/check-env.sh
+./scripts/deploy.sh
+./scripts/post-deploy.sh
+./scripts/test.sh
+```
 
-## Záloha
+`init.sh` zkopíruje Compose a konfiguraci. Nevytváří Docker síť, protože subnet ještě není známý. `deploy.sh` síť vytvoří, připraví adresáře, zapíše `runtime/redis.conf` a `runtime/real-ip.conf` a teprve potom spustí Compose.
 
-`./scripts/backup.sh` a `./scripts/restore.sh` jsou popsané v `docs/backup-restore.md`. Příkaz `age` musí být nainstalovaný v cílovém Debian 13 kontejneru. Prázdný `BACKUP_AGE_RECIPIENT` `backup.sh` odmítne a archiv nezapíše. Cíl `/backups` se použije jen jako připojený mountpoint. Když připojený není, záloha skončí chybou a do obyčejného adresáře nezapíše. Úspěch je ověřená šifrovaná kopie na tomto hostitelském adresáři VPS. Není to jiný disk ani přenos na jiný server. Soukromá identita pro `--identity` zůstává oddělená, mimo Git, stack, data a lokální zálohy.
+`post-deploy.sh` zapíše `state/installed-version` až když `occ status` souhlasí s `NEXTCLOUD_TAG` a `/status.php` nehlásí maintenance. Do té doby druhý `deploy.sh` při existujícím `config.php` odmítne start, aby entrypoint nespustil migraci neznámé verze.
+
+## Běžný deploy
+
+`deploy.sh` smí běžet opakovaně pro změnu Nginx konfigurace, limitů a ostatních framework hodnot. Když se v Gitu změní `NEXTCLOUD_TAG`, `update-env.sh` ho přenese do `.env` a `deploy.sh` skončí chybou s odkazem na `upgrade.sh`. Samotný deploy tedy databázovou migraci nespustí.
+
+`reload.sh` volá `deploy.sh` a pak kontejnery znovu vytvoří. I tady platí stejná pojistka verze.
+
+## Co musí správce doplnit
+
+- `NEXTCLOUD_BACKEND_BIND` a případně port, pokud 8080 nevyhovuje
+- `TRUSTED_PROXIES`, CIDR adresy, ze kterých Traefik posílá `X-Forwarded-*`
+- `DOCKER_NETWORK_SUBNET` a gateway po kontrole kolize s WireGuardem, Incus a LAN
+- `POSTGRESQL_HOST_DIR` na SSD/NVMe mountu
+- `NEXTCLOUD_DATA_HOST_DIR` na HDD, jiný adresář než živá stará data
+- `NEXTCLOUD_ADMIN_USER`
+- `RESTIC_REPOSITORY` a offline kopii vygenerovaného `RESTIC_PASSWORD`
+- `BACKUP_AGE_RECIPIENT`, veřejný age příjemce
+- volitelně SMTP a `BACKUP_EXTERNAL_DIR`, pokud je to opravdu mountpoint
+
+Hesla `PG_PASS`, `REDIS_PASSWORD`, `NEXTCLOUD_ADMIN_PASSWORD` a `RESTIC_PASSWORD` generuje `update-env.sh`. Do logu je nepíše.
+
+## Uživatelé a klienti
+
+Veřejné URL je `https://gregor.serveftp.org`. Desktopový klient, mobilní aplikace, WebDAV, CalDAV a CardDAV používají tuto doménu. Nginx posílá `/.well-known/carddav` a `/.well-known/caldav` na `/remote.php/dav/` a `webfinger` i `nodeinfo` na front controller. Velký upload je povolený do 16G shodně v PHP i Nginxu.
+
+Plošný Authentik ForwardAuth se na doménu nezapíná. OIDC může přijít později jako samostatná změna.

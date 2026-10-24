@@ -1,65 +1,61 @@
 # Architektura
 
-## Kde co běží
-
-Authentik je v Incus kontejneru `10.10.10.100`. Skripty předpokládají, že už v něm běží Docker a Dockge. `incus launch` v tomto repozitáři není.
-
-Infrastructure-netcup (`10.10.10.10`) má centrální Traefik. Tento stack Traefik neobsahuje a nerestartuje ho.
+Veřejná cesta zůstává:
 
 ```text
-klient
-  -> https://auth.serveftp.org
-  -> Traefik v Infrastructure-netcup
-  -> http://10.10.10.100:9000
-  -> authentik-server (embedded outpost + server)
-  -> PostgreSQL na síti authentik-netcup
+Internet → veřejná IP VPS → HAProxy → Infrastructure-netcup / Traefik
+        → WireGuard → Nginx v Incus kontejneru na domácím serveru
 ```
 
-Worker zpracovává úlohy ve stejné databázi. Veřejný port nemá.
+Tento repozitář popisuje jen poslední úsek. DNS, HAProxy, firewall VPS, WireGuard a soubor `configs/traefik/dynamic/nextcloud.yml` v Infrastructure-netcup sem nepatří.
 
-## Docker síť
+## Služby
 
-`compose/00-networks.yml` síť jen připojuje (`external: true`). Vytváří ji `init.sh`.
+| Služba | Image, ověřeno 2026-10-20 | Port na hostiteli |
+| --- | --- | --- |
+| postgresql | `docker.io/library/postgres:18.6` | žádný |
+| redis | `docker.io/library/redis:8.10.2-alpine` | žádný |
+| nextcloud | `docker.io/library/nextcloud:35.0.2-fpm` | žádný, PHP-FPM 9000 jen v síti Compose |
+| nginx | `docker.io/library/nginx:1.30.6-alpine` | `NEXTCLOUD_BACKEND_BIND:NEXTCLOUD_BACKEND_PORT` |
+| cron | stejný tag jako nextcloud, příkaz `/cron.sh` | žádný |
 
-| Projekt | Subnet v jeho `scripts/config.sh` |
-| --- | --- |
-| Infrastructure-netcup | `10.40.0.0/16` |
-| Monitoring-netcup | `10.40.0.0/16` |
-| Vaultwarden-netcup | `10.41.0.0/16` |
-| Authentik-netcup | `10.42.0.0/16` |
+Zdroje pinů:
 
-`10.42.0.0/16` se nepřekrývá s Incus LAN `10.10.10.0/24`. Každý Incus kontejner má vlastní Docker daemon, takže cizí bridge není společná L2 síť. Seznam Docker sítí uvnitř běžícího kontejneru `10.10.10.100` z tohoto checkoutu zkontrolován nebyl.
+- Nextcloud 35.0.2, 15. října 2026: https://nextcloud.com/install/
+- Požadavky Nextcloud 35, PHP 8.3 / 8.4 / 8.5 (doporučeno 8.5), PostgreSQL 14–18 (doporučeno 18): https://docs.nextcloud.com/server/stable/admin_manual/installation/system_requirements.html
+- Tag `35.0.2-fpm` v official-images a Dockerfile `FROM php:8.5-fpm-trixie`, commit `a1af1a30`: https://github.com/nextcloud/docker
+- PostgreSQL 18.6, `PGDATA=/var/lib/postgresql/18/docker`, volume `/var/lib/postgresql`: https://hub.docker.com/_/postgres
+- Redis 8.10.2 a nginx 1.30.6 stable: https://hub.docker.com/_/redis a https://hub.docker.com/_/nginx
 
-Statické adresy v `.env.example`:
+Pohyblivé tagy `latest`, `stable` a `stable-fpm` se nepoužívají. `35.0.2-fpm` je zároveň `fpm` a `35-fpm` v katalogu Docker Hubu; v `.env` je jen přesný patch tag.
 
-| Služba | Adresa |
-| --- | --- |
-| PostgreSQL | `10.42.0.10` |
-| server | `10.42.0.20` |
-| worker | `10.42.0.21` |
+Image Nextcloudu obsahuje APCu, OPcache (včetně doporučeného `opcache-recommended.ini`), rozšíření `redis` a `pdo_pgsql`. `apcu.config.php` nastavuje `memcache.local` na APCu. `redis.config.php` nastavuje distribuovanou cache a zamykání, když je `REDIS_HOST`. Hook `configs/nextcloud/hooks/10-apcu.sh` stejné hodnoty zapíše i do `config.php`, aby je obsahovala záloha konfigurace.
 
-## Compose
+## Síť
 
-`compose.yml` je vstup. Služby jsou v `compose/10-postgresql.yml`, `compose/20-authentik-server.yml` a `compose/30-authentik-worker.yml`.
+Compose síť `nextcloud-gr` je external. `deploy.sh` ji vytvoří až z `DOCKER_NETWORK_SUBNET` a `DOCKER_NETWORK_GATEWAY`. Rozsah z tohoto checkoutu není zvolený: rozsahy WireGuardu a domácí LAN nebyly ověřené. `check-env.sh` odmítne placeholder i rozsah mimo RFC1918 a CGNAT `100.64.0.0/10`.
 
-Obrazy jsou připnuté:
+Kontejnery nemají pevné IP. Nginx volá PHP-FPM jako `nextcloud:9000`. Nextcloud volá databázi `postgresql` a Redis `redis`.
 
-- `ghcr.io/goauthentik/server:2026.8.3`
-- `docker.io/library/postgres:16-alpine`
+Bind adresa backendu je placeholder `set_backend_bind_address`. `0.0.0.0` a loopback `check-env.sh` odmítne. Povolená je jen konkrétní adresa z RFC1918 nebo CGNAT, aby Traefik na VPS dosáhl na domácí kontejner a port nebyl vystavený na všech rozhraních.
 
-Tag `2026.8.3` je hodnota z upstream souboru `lifecycle/container/compose.yml` pro release 2026.8. Redis upstream soubor neobsahuje; authentik 2025.10 Redis odstranil a embedded outpost ukládá session do PostgreSQL.
+## Data
 
-Server publikuje jen `10.10.10.100:9000`. PostgreSQL hostitelský port nemá. Port `9443` se nepublikuje.
+| Účel | Kde se nastavuje | Poznámka |
+| --- | --- | --- |
+| HTML, config, custom apps, themes | `/docker-data/nextcloud-gr/html` | disk Incus připojený jako `/docker-data` |
+| PostgreSQL 18 | `POSTGRESQL_HOST_DIR` | adresář uvnitř mountu na SSD/NVMe, ne samotný mountpoint |
+| Uživatelská data | `NEXTCLOUD_DATA_HOST_DIR` | adresář uvnitř HDD RAID mountu, ne data staré instance |
+| Stav instalace | `/docker-data/nextcloud-gr/state` | installed-version, postgres-major, upgrade.lock |
+| Age archiv | `/docker-data/backups/nextcloud-gr` | dump, config, apps, themes, manifest |
+| Restic | `RESTIC_REPOSITORY` | jen uživatelský datový adresář |
 
-## Uživatelé adresářů
+Na stroji, kde vznikl tento checkout (`/run/media/gregor/DataLinux`, btrfs), cesty `/docker-data`, `/HDD`, `/SDD` a `/incus-dir` neexistují. Filesystém cílových disků v novém Incus kontejneru odsud ověřit nešel. `deploy.sh` proto při chybějícím mountu adresář nevytvoří.
 
-Ověřeno ze zdrojových Dockerfile, ne z běžícího kontejneru:
+Uvnitř kontejneru je uživatel Nextcloudu `www-data` uid 33 a uživatel PostgreSQL uid 999. To jsou uid v namespace kontejneru. Na hostiteli je u neprivilegovaného Incus vidět posunuté id. Skripty se spouštějí uvnitř kontejneru a `chown -R` na existujícím stromu nedělají.
 
-- authentik `2026.8.3`, `lifecycle/container/Dockerfile`: `adduser --uid 1000` a `USER 1000`
-- PostgreSQL 16 Alpine 3.23: `adduser -u 70` / `addgroup -g 70`
+## Oddělení verze
 
-`init.sh` podle toho nastaví vlastníka datových adresářů. Worker v upstream Compose běží jako root jen kvůli Docker socketu pro samostatné outposty. Tady socket není, worker zůstává uid 1000.
+`NEXTCLOUD_TAG` v `.env.example` je framework hodnota. `update-env.sh` ji zkopíruje do runtime `.env`, ale tím upgrade nespustí. `deploy.sh` porovná tag se souborem `state/installed-version`. Liší-li se, skončí a odkáže na `upgrade.sh`. Stejná kontrola platí pro hlavní verzi PostgreSQL v `state/postgres-major`. Image entrypoint by při startu novějšího kódu migraci spustil sám, proto se k `compose up` při neshodě vůbec nedojde.
 
-## Dockge
-
-Dockge v kontejneru už používá `/docker-data/stacks`. Stack `authentik-netcup` se v něm objeví, protože `deploy.sh` a `init.sh` zapisují `compose.yml` do `/docker-data/stacks/authentik-netcup`. `deploy.sh` běžící Dockge jen zkontroluje. `install-dockge.sh` instalaci odmítne.
+Cron má `NEXTCLOUD_UPDATE=0` a vlastní entrypoint `/cron.sh`. Oficiální image spouští instalaci a upgrade jen u výchozího příkazu `php-fpm`. Upgrade tedy běží jen v kontejneru `nextcloud`.

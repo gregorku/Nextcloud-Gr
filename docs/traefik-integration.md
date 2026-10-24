@@ -1,34 +1,36 @@
-# Návaznost na Infrastructure-netcup
+# Traefik
 
-Traefik, DNS, certifikáty a middleware zůstávají v repozitáři a kontejneru Infrastructure-netcup. Authentik-netcup je nepřidává a při deployi Traefik nerestartuje. `deploy_restart_services` je proto prázdný krok se zprávou, že lokální reverse proxy se nerestartuje.
+Router se do tohoto repozitáře nezapisuje. V Infrastructure-netcup bude později soubor `configs/traefik/dynamic/nextcloud.yml`. Tento projekt určuje jen backend.
 
-## Backend
+## Smlouva
 
-| Položka | Hodnota |
-| --- | --- |
-| Jméno | `auth.serveftp.org` |
-| Backend | `http://10.10.10.100:9000` |
-| Vazba portu | jen `10.10.10.100`, ne `0.0.0.0` |
-| TLS | na Traefiku, ne v Authentiku |
+- Veřejné jméno: `gregor.serveftp.org`
+- Schéma mezi Traefikem a Nginxem: HTTP
+- Adresa a port: hodnoty `NEXTCLOUD_BACKEND_BIND` a `NEXTCLOUD_BACKEND_PORT` po jejich doplnění do runtime `.env`
+- TLS a certifikát: Traefik v Infrastructure-netcup
+- `TRUSTED_PROXIES`: CIDR, ze kterého Traefik na tento Nginx přichází. Bez změřené adresy zůstává placeholder a deploy neproběhne
 
-Router, service a middleware se doplní v Infrastructure-netcup. Tento dokument je jen smlouva mezi projekty, ne konfigurace Traefiku.
+Traefik má posílat `X-Forwarded-Proto: https`, `X-Forwarded-Host: gregor.serveftp.org` a `X-Forwarded-For` s adresou klienta. Nextcloud má `overwriteprotocol=https`, `overwritehost` a `overwrite.cli.url` nastavené na veřejnou HTTPS adresu.
 
-## Hlavičky
+WebDAV, CalDAV, CardDAV, desktopový a mobilní klient jdou na stejnou doménu bez ForwardAuth. Nezapínejte middleware, který by vyžadoval přihlášení Authentikem před každým požadavkem na `/remote.php` nebo `/.well-known`.
 
-Authentik přijme `X-Forwarded-Proto`, `X-Forwarded-Host` a `X-Forwarded-For` jen od adresy ze `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS`. Od release 2026.8 to platí pro forwarded hlavičky důsledně. Výchozí seznam authentiku se nastavením proměnné nahrazuje, nepřidává se k němu.
+Ukázka, kterou patří doplnit až budou známé adresy, nepatří do tohoto Compose:
 
-Placeholder `set_trusted_proxy_cidrs` deploy odmítne. CIDR doplňte podle adresy, ze které se Traefik na `10.10.10.100:9000` skutečně připojí. Ta adresa z tohoto checkoutu změřená nebyla. Traefik v Infrastructure-netcup je na `10.10.10.10`, ale Docker při publikaci portu může zdrojovou adresu přepsat. Do `.env` proto nepatří odhad.
+```yaml
+http:
+  routers:
+    nextcloud-gr:
+      rule: Host(`gregor.serveftp.org`)
+      entryPoints:
+        - websecure
+      service: nextcloud-gr
+      tls:
+        certResolver: letsencrypt
+  services:
+    nextcloud-gr:
+      loadBalancer:
+        servers:
+          - url: http://ADRESA_Z_ENV:PORT_Z_ENV
+```
 
-## Embedded outpost
-
-Aplikace, které mají jít přes proxy provider Authentiku, používají embedded outpost na stejném portu `9000`. Samostatný outpost kontejner se nespouští a Infrastructure-netcup ho nemá kam směrovat navíc.
-
-## Co se v Infrastructure-netcup nemění tímto repozitářem
-
-- konfigurace Traefiku a jeho souborové providery;
-- CrowdSec;
-- DNS `auth.serveftp.org`;
-- firewall VPS;
-- certifikát pro `auth.serveftp.org`.
-
-Až bude backend z tohoto stacku běžet, ověření zvenku je požadavek na `https://auth.serveftp.org` a na to, že přímý přístup mimo Traefik firewall pustí jen z očekávané adresy.
+`ADRESA_Z_ENV` a `PORT_Z_ENV` sem nepište, dokud je správce v `.env` nenastaví. Router nepotřebuje Docker socket tohoto kontejneru.

@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/checks/load.sh
 #
 # Description:
-#   Load all common Authentik-netcup check libraries.
+#   Load all common Nextcloud-Gr check libraries.
 #
 ###############################################################################
 

@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/checks/docker.sh
 #
 # Description:
-#   Docker validation and helper functions used by Authentik-netcup scripts.
+#   Docker validation and helper functions used by Nextcloud-Gr scripts.
 #
 ###############################################################################
 

@@ -1,25 +1,21 @@
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
 # Main Docker Compose entry point.
 #
-# Traefik is NOT part of this stack. Reverse proxying, DNS and TLS are
-# handled by the separate Infrastructure-netcup Incus container.
-# The backend is http://10.10.10.100:9000.
-#
-# Redis is not included. authentik 2025.10 removed it, and the upstream
-# 2026.8 Compose file ships PostgreSQL, server and worker only.
-# The embedded outpost runs inside the server. There is no separate
-# proxy outpost service and the Docker socket is not mounted.
+# Traefik and Caddy are not part of this stack. There is no Docker
+# socket. Public TLS stays in Infrastructure-netcup.
 #
 ###############################################################################
 
-name: authentik-netcup
+name: nextcloud-gr
 
 include:
 
   - compose/00-networks.yml
   - compose/10-postgresql.yml
-  - compose/20-authentik-server.yml
-  - compose/30-authentik-worker.yml
+  - compose/20-redis.yml
+  - compose/30-nextcloud-fpm.yml
+  - compose/40-nginx.yml
+  - compose/50-cron.yml

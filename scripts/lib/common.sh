@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/common.sh
 #
 # Description:
-#   Common helper functions used by all Authentik-netcup scripts.
+#   Common helper functions used by all Nextcloud-Gr scripts.
 #
 ###############################################################################
 
@@ -97,7 +97,7 @@ require_file_or_directory() {
 ###############################################################################
 # Environment
 #
-# Generic environment required by all Authentik-netcup scripts.
+# Generic environment required by all Nextcloud-Gr scripts.
 ###############################################################################
 
 check_environment() {

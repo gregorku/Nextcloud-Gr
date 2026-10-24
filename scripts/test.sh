@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/test.sh
 #
 # Description:
-#   Run Authentik-netcup tests.
+#   Run Nextcloud-Gr tests.
 #
 # Usage:
 #   ./scripts/test.sh
@@ -64,9 +64,15 @@ source "${SCRIPT_DIR}/lib/env/load.sh"
 ###############################################################################
 
 source "${SCRIPT_DIR}/lib/deploy/stack.sh"
+source "${SCRIPT_DIR}/lib/mount.sh"
+source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/upgrade/php.sh"
+source "${SCRIPT_DIR}/lib/upgrade/apps.sh"
+source "${SCRIPT_DIR}/lib/upgrade/sequence.sh"
 source "${SCRIPT_DIR}/lib/backup/private.sh"
 source "${SCRIPT_DIR}/lib/backup/archive.sh"
 source "${SCRIPT_DIR}/lib/backup/crypto.sh"
+source "${SCRIPT_DIR}/lib/backup/restic.sh"
 source "${SCRIPT_DIR}/lib/backup/restore-plan.sh"
 source "${SCRIPT_DIR}/lib/backup/runtime.sh"
 source "${SCRIPT_DIR}/lib/backup/apply.sh"
@@ -78,7 +84,7 @@ source "${SCRIPT_DIR}/lib/backup/apply.sh"
 show_help()
 {
 cat <<EOF
-Authentik-netcup Project
+Nextcloud-Gr
 
 Usage:
 
@@ -111,15 +117,26 @@ EOF
 run_static_tests()
 {
     source "${SCRIPT_DIR}/lib/tests/static.sh"
+    source "${SCRIPT_DIR}/lib/tests/upgrade.sh"
     source "${SCRIPT_DIR}/lib/tests/backup.sh"
 
-    print_header "Authentik-netcup static test"
+    RESTORE_SKIP_USER_DATA=yes
+
+    print_header "Nextcloud-Gr static test"
 
     test_repository_layout
     test_env_example
     test_runtime_placeholder_rejection
     test_compose_bindings
     test_sync_guards
+    test_script_modes
+    test_external_validators
+    test_version_guard
+    test_php_matrix
+    test_custom_app_compatibility
+    test_upgrade_sequence
+    test_dump_kind
+    test_storage_guard
     test_backup_archive
     test_backup_external_copy
     test_backup_encryption
@@ -129,6 +146,9 @@ run_static_tests()
     test_backup_host_mount
     test_backup_cleanup_failure
     test_backup_quiesce
+    test_backup_completeness
+    test_restic_snapshot_ids_may_differ
+    test_legacy_manifest_does_not_guess_snapshot
     test_restore_confirmation
     test_restore_rejects_incomplete
     test_restore_rolls_back
@@ -154,7 +174,7 @@ run_runtime_tests()
     source "${SCRIPT_DIR}/lib/tests/backend-security.sh"
     source "${SCRIPT_DIR}/lib/tests/summary.sh"
 
-    print_header "Authentik-netcup test"
+    print_header "Nextcloud-Gr test"
 
     check_environment
     check_docker_environment

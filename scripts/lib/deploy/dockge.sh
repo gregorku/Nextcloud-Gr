@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/deploy/dockge.sh
@@ -10,12 +10,12 @@
 # Description:
 #   Confirm that the existing Dockge container can see this stack.
 #
-#   Dockge is already running in the Authentik Incus container and
-#   uses /docker-data/stacks. This function does not stop, remove or
-#   reinstall it. scripts/install-dockge.sh refuses to do that as well.
+#   Dockge is already running in the Incus container and uses
+#   /docker-data/stacks. This function does not stop, remove or
+#   reinstall it.
 #
 #   After init.sh or deploy.sh has created
-#   /docker-data/stacks/authentik-netcup/compose.yml, Dockge lists the
+#   /docker-data/stacks/nextcloud-gr/compose.yml, Dockge lists the
 #   stack because that directory is inside DOCKGE_STACKS_DIR.
 #
 ###############################################################################
@@ -42,5 +42,5 @@ deploy_dockge()
     ok "Dockge is using ${STACKS_DIR}."
 
     info "Stack directory: ${STACK_DIR}"
-    info "Dockge shows Authentik after compose.yml exists in that directory."
+    info "Dockge shows nextcloud-gr after compose.yml exists in that directory."
 }

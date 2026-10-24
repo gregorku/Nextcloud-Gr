@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # No local reverse proxy has to be restarted. Infrastructure-netcup owns
 # Traefik and its configuration.

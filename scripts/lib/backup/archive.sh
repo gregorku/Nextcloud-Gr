@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/backup/archive.sh
@@ -23,9 +23,14 @@
 # Arguments:
 #   $1 - Stage directory
 #   $2 - UTC timestamp
-#   $3 - Authentik image
-#   $4 - Authentik tag
+#   $3 - Nextcloud image
+#   $4 - Nextcloud tag
 #   $5 - PostgreSQL image
+#   $6 - PostgreSQL major
+#   $7 - Restic snapshot id in the repository that created it
+#   $8 - remote or local. Omitted values stay "unspecified".
+#   $9 - Snapshot id verified in the external repository. Empty when
+#        there is no external copy. It may differ from $7.
 #
 ###############################################################################
 
@@ -33,9 +38,13 @@ backup_write_manifest()
 {
     local stage="$1"
     local created_at="$2"
-    local authentik_image="$3"
-    local authentik_tag="$4"
+    local nextcloud_image="$3"
+    local nextcloud_tag="$4"
     local postgres_image="$5"
+    local postgres_major="${6:-${POSTGRES_MAJOR}}"
+    local restic_snapshot_id="${7:-}"
+    local restic_repository_scope="${8:-unspecified}"
+    local restic_external_snapshot_id="${9:-}"
     local manifest="${stage}/manifest.txt"
     local path
     local hash
@@ -49,11 +58,17 @@ backup_write_manifest()
     {
         printf 'project=%s\n' "${PROJECT_NAME}"
         printf 'created_at=%s\n' "${created_at}"
-        printf 'authentik_image=%s\n' "${authentik_image}"
-        printf 'authentik_tag=%s\n' "${authentik_tag}"
+        printf 'nextcloud_image=%s\n' "${nextcloud_image}"
+        printf 'nextcloud_tag=%s\n' "${nextcloud_tag}"
         printf 'postgres_image=%s\n' "${postgres_image}"
+        printf 'postgres_major=%s\n' "${postgres_major}"
         printf 'database_format=custom\n'
-        printf 'database_file=postgresql/authentik.dump\n'
+        printf 'database_engine=postgresql\n'
+        printf 'database_file=postgresql/nextcloud.dump\n'
+        printf 'restic_snapshot_id=%s\n' "${restic_snapshot_id}"
+        printf 'restic_external_snapshot_id=%s\n' "${restic_external_snapshot_id}"
+        printf 'restic_repository_scope=%s\n' "${restic_repository_scope}"
+        printf 'data_backup=restic\n'
     } > "${manifest}"
 
     while IFS= read -r -d '' path
@@ -159,6 +174,66 @@ backup_manifest_field()
     done < "${manifest}"
 
     fail "Manifest field is missing: ${field}"
+}
+
+###############################################################################
+# Read one manifest field when it may be absent.
+#
+# Arguments:
+#   $1 - Manifest file
+#   $2 - Field name
+#
+# Prints an empty line and returns 0 when the field is missing.
+#
+###############################################################################
+
+backup_manifest_optional_field()
+{
+    local manifest="$1"
+    local field="$2"
+    local line
+
+    while IFS= read -r line || [[ -n "${line}" ]]
+    do
+        [[ "${line}" == "${field}="* ]] || continue
+        printf '%s\n' "${line#"${field}="}"
+        return 0
+    done < "${manifest}"
+
+    printf '\n'
+    return 0
+}
+
+###############################################################################
+# Read restic tree, snapshot time and hostname when a manifest has them.
+#
+# created_at is the script clock taken before restic runs. It is not
+# the snapshot time and this function does not return it.
+#
+# Arguments:
+#   $1 - Manifest file
+#
+# Prints tree, time and hostname on three lines. Returns 1 when any
+# of those fields is missing. An old manifest has none of them.
+#
+###############################################################################
+
+backup_manifest_snapshot_locator()
+{
+    local manifest="$1"
+    local tree
+    local snapshot_time
+    local hostname
+
+    tree="$(backup_manifest_optional_field "${manifest}" restic_tree)"
+    snapshot_time="$(backup_manifest_optional_field "${manifest}" restic_snapshot_time)"
+    hostname="$(backup_manifest_optional_field "${manifest}" restic_hostname)"
+
+    [[ "${tree}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [[ -n "${snapshot_time}" && "${snapshot_time}" != *$'\n'* && "${snapshot_time}" == *T* ]] || return 1
+    [[ -n "${hostname}" && "${hostname}" != *$'\n'* ]] || return 1
+
+    printf '%s\n%s\n%s\n' "${tree}" "${snapshot_time}" "${hostname}"
 }
 
 ###############################################################################

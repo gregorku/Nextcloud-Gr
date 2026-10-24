@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/logging.sh
 #
 # Description:
-#   Common logging functions used by all Authentik-netcup scripts.
+#   Common logging functions used by all Nextcloud-Gr scripts.
 #
 ###############################################################################
 # Internal logging functions
@@ -32,6 +32,11 @@ log_warn() {
 log_error() {
 
     printf "${COLOR_RED}[FAIL]${COLOR_RESET} %s\n" "$*" >&2
+}
+
+log_not_performed() {
+
+    printf 'NEPROVEDENO: %s\n' "$*"
 }
 
 ###############################################################################

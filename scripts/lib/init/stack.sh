@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-#
-# File: scripts/lib/init/stack.sh
-#
-# Description:
-#   Initial preparation of the Authentik-netcup deployment stack.
-#
-# Responsibilities:
-#   - create STACK_DIR
-#   - copy all deployment items from the Git repository
-#   - replace any previous content of those items
-#
-# This function is intended to be called ONLY from init.sh.
-# For regular deployments use deploy_sync_stack().
-#
-# The copy removes and replaces each DEPLOY_ITEMS path and nothing
-# else. Runtime .env is not a deployment item.
 
 init_stack()
 {
@@ -22,7 +6,7 @@ init_stack()
 
     assert_sync_paths
 
-    log_info "Preparing Authentik-netcup stack..."
+    log_info "Preparing Nextcloud-Gr stack..."
 
     mkdir -p "${STACK_DIR}"
 
@@ -44,5 +28,5 @@ init_stack()
 
     done
 
-    log_success "Authentik-netcup stack prepared."
+    log_success "Nextcloud-Gr stack prepared."
 }

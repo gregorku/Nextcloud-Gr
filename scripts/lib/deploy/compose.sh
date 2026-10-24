@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/deploy/compose.sh
 #
 # Description:
-#   Validate, pull and start the Authentik Compose stack.
+#   Validate, pull and start the Nextcloud Compose stack.
 #
 #   deploy.sh is the only command that starts the stack. These
 #   functions are not called by init.sh or by the static tests.
@@ -24,9 +24,9 @@ deploy_validate_compose()
 
 deploy_compose()
 {
-    print_section "Authentik-netcup"
+    print_section "Nextcloud-Gr"
 
-    log_info "Pulling images..."
+    log_info "Pulling pinned images..."
 
     compose_pull
 
@@ -34,5 +34,5 @@ deploy_compose()
 
     compose_up
 
-    log_success "Authentik-netcup deployed."
+    log_success "Nextcloud-Gr started."
 }

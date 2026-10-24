@@ -2,13 +2,13 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/lib/tests/summary.sh
 #
 # Description:
-#   Print Authentik-netcup test summary.
+#   Print Nextcloud-Gr test summary.
 #
 ###############################################################################
 
@@ -20,7 +20,7 @@ test_summary()
 {
     print_section "Finished"
 
-    ok "Authentik-netcup tests completed."
+    ok "Nextcloud-Gr tests completed."
 
     echo
 

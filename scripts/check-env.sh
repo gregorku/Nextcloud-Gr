@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr
 #
 # File:
 #   scripts/check-env.sh
@@ -15,9 +15,8 @@
 #   ./scripts/check-env.sh --help
 #
 #   Rejects a missing variable, an unknown variable, a set_* placeholder,
-#   a PostgreSQL password longer than 99 characters, a short
-#   AUTHENTIK_SECRET_KEY, conflicting SMTP TLS flags and a backup path
-#   that points at Git, the stack or persistent data.
+#   an invalid address or CIDR, a forbidden port or path, and a
+#   PostgreSQL password outside 16–99 characters.
 #
 #   Does not start containers and does not modify .env.
 #
@@ -57,7 +56,7 @@ source "${SCRIPT_DIR}/lib/env/load.sh"
 show_help()
 {
 cat <<EOF
-Authentik-netcup Project
+Nextcloud-Gr
 
 Usage:
 
@@ -98,7 +97,7 @@ case "${1:-}" in
 
 esac
 
-print_header "Authentik-netcup Environment Check"
+print_header "Nextcloud-Gr environment check"
 
 check_environment
 

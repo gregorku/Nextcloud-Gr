@@ -1,19 +1,17 @@
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
-# Docker network used only inside the Authentik Incus container.
-# init.sh creates it. Compose does not, because it is external.
-#
-# Subnet 10.42.0.0/16 is documented in scripts/config.sh.
-# Traefik is external and runs in Infrastructure-netcup.
+# Docker bridge used only inside this Incus container.
+# deploy.sh creates it after DOCKER_NETWORK_SUBNET is set. Compose does
+# not create it, because it is external. Containers have no fixed IPs.
 #
 ###############################################################################
 
 networks:
 
-  authentik-netcup:
+  nextcloud-gr:
 
-    name: authentik-netcup
+    name: nextcloud-gr
 
     external: true

@@ -2,7 +2,7 @@
 
 ###############################################################################
 #
-# Authentik-netcup Project
+# Nextcloud-Gr Project
 #
 # Environment variable policies.
 #
@@ -15,96 +15,70 @@
 
 declare -gA ENV_POLICY
 
-###############################################################################
-# Docker Compose
-###############################################################################
-
 ENV_POLICY[COMPOSE_PROJECT_NAME]="framework"
 
-###############################################################################
-# Persistent data
-###############################################################################
-
 ENV_POLICY[DATA_DIR]="framework"
+ENV_POLICY[NEXTCLOUD_HTML_HOST_DIR]="framework"
+ENV_POLICY[POSTGRESQL_HOST_DIR]="user"
+ENV_POLICY[NEXTCLOUD_DATA_HOST_DIR]="user"
+ENV_POLICY[NEXTCLOUD_SOURCE_DATA_DIR]="user"
 
-###############################################################################
-# Authentik host
-###############################################################################
+ENV_POLICY[NEXTCLOUD_DOMAIN]="framework"
+ENV_POLICY[NEXTCLOUD_BACKEND_BIND]="user"
+ENV_POLICY[NEXTCLOUD_BACKEND_PORT]="user"
+ENV_POLICY[NEXTCLOUD_TRUSTED_DOMAINS]="framework"
 
-ENV_POLICY[AUTHENTIK_HOST_IP]="framework"
-ENV_POLICY[AUTHENTIK_HTTP_PORT]="framework"
-ENV_POLICY[AUTHENTIK_DOMAIN]="user"
-
-###############################################################################
-# Images
-###############################################################################
-
-ENV_POLICY[AUTHENTIK_IMAGE]="framework"
-ENV_POLICY[AUTHENTIK_TAG]="framework"
+ENV_POLICY[NEXTCLOUD_IMAGE]="framework"
+ENV_POLICY[NEXTCLOUD_TAG]="framework"
 ENV_POLICY[POSTGRES_IMAGE]="framework"
+ENV_POLICY[REDIS_IMAGE]="framework"
+ENV_POLICY[NGINX_IMAGE]="framework"
 
-###############################################################################
-# PostgreSQL
-###############################################################################
+ENV_POLICY[DOCKER_NETWORK_SUBNET]="user"
+ENV_POLICY[DOCKER_NETWORK_GATEWAY]="user"
 
 ENV_POLICY[PG_DB]="framework"
 ENV_POLICY[PG_USER]="framework"
 ENV_POLICY[PG_PASS]="generated"
 
-###############################################################################
-# Authentik
-###############################################################################
+ENV_POLICY[REDIS_PASSWORD]="generated"
 
-ENV_POLICY[AUTHENTIK_SECRET_KEY]="generated"
-ENV_POLICY[AUTHENTIK_POSTGRESQL__SSLMODE]="framework"
-ENV_POLICY[AUTHENTIK_ERROR_REPORTING__ENABLED]="framework"
-ENV_POLICY[AUTHENTIK_OUTPOSTS__DISCOVER]="framework"
-ENV_POLICY[AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS]="user"
+ENV_POLICY[NEXTCLOUD_ADMIN_USER]="user"
+ENV_POLICY[NEXTCLOUD_ADMIN_PASSWORD]="generated"
 
-###############################################################################
-# Internal addresses
-###############################################################################
+ENV_POLICY[TRUSTED_PROXIES]="user"
+ENV_POLICY[OVERWRITEPROTOCOL]="framework"
+ENV_POLICY[OVERWRITEHOST]="framework"
+ENV_POLICY[OVERWRITECLIURL]="framework"
+ENV_POLICY[FORWARDED_FOR_HEADERS]="framework"
 
-ENV_POLICY[IP_POSTGRESQL]="user"
-ENV_POLICY[IP_AUTHENTIK_SERVER]="user"
-ENV_POLICY[IP_AUTHENTIK_WORKER]="user"
-
-###############################################################################
-# SMTP
-###############################################################################
-
-ENV_POLICY[AUTHENTIK_EMAIL__HOST]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__PORT]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__USERNAME]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__PASSWORD]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__USE_TLS]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__USE_SSL]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__TIMEOUT]="user"
-ENV_POLICY[AUTHENTIK_EMAIL__FROM]="user"
-
-###############################################################################
-# Logging
-###############################################################################
+ENV_POLICY[PHP_MEMORY_LIMIT]="framework"
+ENV_POLICY[PHP_UPLOAD_LIMIT]="framework"
+ENV_POLICY[PHP_OPCACHE_MEMORY_CONSUMPTION]="framework"
 
 ENV_POLICY[LOG_MAX_SIZE]="framework"
 ENV_POLICY[LOG_MAX_FILES]="framework"
 
-###############################################################################
-# External backup destination
-#
-# Empty is valid and means "local backup only".
-###############################################################################
-
+ENV_POLICY[BACKUP_LOCAL_DIR]="framework"
 ENV_POLICY[BACKUP_EXTERNAL_DIR]="user"
-
-###############################################################################
-# Public age recipient
-#
-# Empty means backup.sh does not write an archive. This is not an
-# identity. The private key is never stored here.
-###############################################################################
-
 ENV_POLICY[BACKUP_AGE_RECIPIENT]="user"
+
+ENV_POLICY[RESTIC_REPOSITORY]="user"
+ENV_POLICY[RESTIC_PASSWORD]="generated"
+ENV_POLICY[RESTIC_KEEP_DAILY]="framework"
+ENV_POLICY[RESTIC_KEEP_WEEKLY]="framework"
+ENV_POLICY[RESTIC_KEEP_MONTHLY]="framework"
+ENV_POLICY[RESTIC_KEEP_YEARLY]="framework"
+
+ENV_POLICY[UPGRADE_MIN_FREE_MB]="framework"
+
+ENV_POLICY[SMTP_HOST]="user"
+ENV_POLICY[SMTP_PORT]="user"
+ENV_POLICY[SMTP_SECURE]="user"
+ENV_POLICY[SMTP_NAME]="user"
+ENV_POLICY[SMTP_PASSWORD]="user"
+ENV_POLICY[MAIL_FROM_ADDRESS]="user"
+ENV_POLICY[MAIL_DOMAIN]="user"
 
 ###############################################################################
 # Return variable policy
