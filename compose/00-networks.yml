@@ -1,17 +1,42 @@
 ###############################################################################
+# Nextcloud-Gr – Docker sítě
+###############################################################################
 #
-# Nextcloud-Gr Project
+# ÚČEL
+#   Síť nextcloud-gr propojuje kontejnery služeb tohoto Compose stacku,
+#   například Nextcloud, PostgreSQL, Redis, Nginx a cron.
 #
-# Docker bridge used only inside this Incus container.
-# deploy.sh creates it after DOCKER_NETWORK_SUBNET is set. Compose does
-# not create it, because it is external. Containers have no fixed IPs.
+# KDE SE NASTAVUJE ADRESACE
+#   Rozsah sítě a její gateway se nastavují v runtime souboru .env pomocí:
+#     DOCKER_NETWORK_SUBNET
+#     DOCKER_NETWORK_GATEWAY
+#
+#   .env.example obsahuje pouze zástupné hodnoty. Před nasazením je nahraď
+#   skutečnými hodnotami, které nekolidují s LAN, VPN, Incus ani jinými
+#   Docker sítěmi. Aktuálně zjištěné rozsahy, kterým se musíme vyhnout:
+#     192.168.12.0/24  – LAN přes Incus br0
+#     172.17.0.0/16    – výchozí Docker bridge uvnitř kontejneru nextcloudGr
+#     10.10.10.0/24    – Incus incusbr0 na hostiteli
+#
+# JAK SÍŤ VZNIKÁ
+#   Síť vytváří scripts/deploy.sh podle hodnot z runtime .env.
+#   Proto je zde označena jako external: true: Compose ji nevytváří ani
+#   neřídí její IPAM konfiguraci, pouze se k již existující síti připojuje.
+#
+# IP ADRESY KONTEJNERŮ
+#   Službám se zde nepřiřazují pevné IP adresy. Komunikace mezi službami
+#   má používat názvy služeb / DNS v rámci Docker sítě.
+#
+# DŮLEŽITÉ
+#   Po změně subnetu nebo gateway ověř konfiguraci a spusť kontrolní skript
+#   projektu. Deploy nespouštěj, dokud scripts/check-env.sh hlásí chyby.
 #
 ###############################################################################
 
 networks:
-
   nextcloud-gr:
-
+    # Název existující Docker sítě vytvořené skriptem deploy.sh.
     name: nextcloud-gr
 
+    # Síť musí existovat před spuštěním Compose.
     external: true
