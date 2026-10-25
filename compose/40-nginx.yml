@@ -12,9 +12,7 @@
 ###############################################################################
 
 services:
-
   nginx:
-
     image: ${NGINX_IMAGE}
 
     container_name: nextcloud-gr-nginx
@@ -27,23 +25,19 @@ services:
       - no-new-privileges:true
 
     ports:
-
       - "${NEXTCLOUD_BACKEND_BIND}:${NEXTCLOUD_BACKEND_PORT}:80"
 
     volumes:
-
-      - ./configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./runtime/real-ip.conf:/etc/nginx/real-ip.conf:ro
+      - ../configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../runtime/real-ip.conf:/etc/nginx/real-ip.conf:ro
       - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html:ro
       - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data:ro
 
     depends_on:
-
       nextcloud:
         condition: service_healthy
 
     healthcheck:
-
       test:
         - CMD-SHELL
         - wget -q -O /dev/null http://127.0.0.1/status.php
@@ -57,11 +51,9 @@ services:
       start_period: 30s
 
     networks:
-
       - nextcloud-gr
 
     logging:
-
       driver: json-file
 
       options:
