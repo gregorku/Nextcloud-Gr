@@ -28,7 +28,7 @@ render_redis_conf()
     chmod 700 "${directory}"
 
     tmp="$(mktemp "${directory}/redis.conf.XXXXXX")"
-    chmod 600 "${tmp}"
+    chmod 644 "${tmp}"
 
     cat > "${tmp}" <<EOF
 bind 0.0.0.0
@@ -42,7 +42,7 @@ appendonly no
 EOF
 
     mv "${tmp}" "${dest}"
-    chmod 600 "${dest}"
+    chmod 644 "${dest}"
 }
 
 render_real_ip_conf()
