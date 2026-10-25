@@ -16,9 +16,7 @@
 ###############################################################################
 
 services:
-
   cron:
-
     image: ${NEXTCLOUD_IMAGE}:${NEXTCLOUD_TAG}
 
     container_name: nextcloud-gr-cron
@@ -34,7 +32,6 @@ services:
       - /cron.sh
 
     environment:
-
       POSTGRES_HOST: postgresql
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
@@ -57,12 +54,10 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN}
 
     volumes:
-
       - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html
       - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data
 
     depends_on:
-
       nextcloud:
         condition: service_healthy
 
@@ -75,15 +70,14 @@ services:
     # /cron.sh does `exec busybox crond -f -L /dev/stdout`, so PID 1 is
     # crond, not the shell and not cron.sh. The image has no ps.
     healthcheck:
-
       test:
         - CMD-SHELL
         - >-
           set -eu;
-          cmdline=$(tr '\0' ' ' < /proc/1/cmdline) || exit 1;
-          printf '%s\n' "$cmdline" | grep -F -q 'busybox crond' || exit 1;
-          status=$(su -s /bin/bash www-data -c 'php /var/www/html/occ status') || exit 1;
-          printf '%s\n' "$status" | grep -Eq 'installed:[[:space:]]*true'
+          cmdline=$$(tr '\0' ' ' < /proc/1/cmdline) || exit 1;
+          printf '%s\n' "$$cmdline" | grep -F -q 'busybox crond' || exit 1;
+          status=$$(su -s /bin/bash www-data -c 'php /var/www/html/occ status') || exit 1;
+          printf '%s\n' "$$status" | grep -Eq 'installed:[[:space:]]*true'
 
       interval: 30s
 
@@ -94,11 +88,9 @@ services:
       start_period: 60s
 
     networks:
-
       - nextcloud-gr
 
     logging:
-
       driver: json-file
 
       options:
