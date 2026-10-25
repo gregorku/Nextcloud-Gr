@@ -145,6 +145,34 @@ test_compose_bindings()
         "${root}/compose/40-nginx.yml" \
         || fail "Nginx is not bound to the configured private address."
 
+    grep -Fq '../configs/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro' \
+        "${root}/compose/40-nginx.yml" \
+        || fail "Nginx snippet is not mounted in conf.d."
+
+    if grep -q '/etc/nginx/nginx.conf' "${root}/compose/40-nginx.yml"; then
+        fail "Nginx snippet replaces the main nginx.conf."
+    fi
+
+    if grep -q 'nginx.conf' "${root}/compose/30-nextcloud-fpm.yml"; then
+        fail "The Nextcloud service mounts the Nginx configuration."
+    fi
+
+    grep -Fq '${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "Nextcloud HTML is not writable."
+
+    if grep -Fq '/var/www/html:ro' "${root}/compose/30-nextcloud-fpm.yml"; then
+        fail "Nextcloud HTML is mounted read-only."
+    fi
+
+    grep -Fq '10-apcu.sh:/docker-entrypoint-hooks.d/post-installation/10-apcu.sh:ro' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "The Nextcloud installation hook is not mounted."
+
+    grep -Fq 'installed:[[:space:]]*true' \
+        "${root}/compose/50-cron.yml" \
+        || fail "Cron healthcheck does not require an installed Nextcloud."
+
     if grep -R -n -E '0\.0\.0\.0:|5432:5432|6379:6379|9000:9000' \
         "${root}/compose" "${root}/compose.yml"; then
         fail "Compose publishes a forbidden address or port."
@@ -189,6 +217,7 @@ test_sync_guards()
     local git_dir
     local stack_dir
     local outside
+    local refused
 
     work="$(mktemp -d)"
     git_dir="${work}/git"
@@ -216,7 +245,16 @@ test_sync_guards()
     [[ -f "${stack_dir}/.env" ]] \
         || fail "rsync --delete removed the runtime .env."
 
-    local refused
+    mkdir -p "${git_dir}/empty-item"
+    refused="$(
+        sync_item_contents \
+            "${git_dir}/empty-item" \
+            "${stack_dir}/empty-item" \
+            "${stack_dir}" \
+            2>&1
+    )" || true
+    [[ "${refused}" == *"empty source"* ]] \
+        || fail "rsync --delete accepted an empty source: ${refused}"
 
     refused="$(
         sync_replace_item \

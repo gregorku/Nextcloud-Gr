@@ -172,6 +172,17 @@ deploy_align_database_owner()
     done <<< "${owners}"
 
     ok "Nextcloud database objects are usable by ${db_user}."
+
+    if [[ -f "${NEXTCLOUD_HTML_DIR}/config/config.php" ]]; then
+        nextcloud_config_set_database \
+            "${NEXTCLOUD_HTML_DIR}/config/config.php" \
+            "${db_name}" \
+            "${db_user}" \
+            "${db_pass}" \
+            "postgresql" \
+            || fail "config.php database identity was not updated. No data directory was deleted."
+        info "config.php now uses ${db_user} on ${db_name}. The installed flag was not changed."
+    fi
 }
 
 deploy_compose()

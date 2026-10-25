@@ -43,7 +43,7 @@ Na tomto checkoutu ty mounty nejsou. Jejich filesystém, vlastníka a test zápi
 
 `post-deploy.sh` počká na healthchecky. Stavové soubory zapíše atomicky až když běžící obrazy odpovídají pinu, `occ status` souhlasí s `NEXTCLOUD_TAG`, `needsDbUpgrade` je false, hlavní verze PostgreSQL souhlasí s `POSTGRES_IMAGE` a s `PG_VERSION`, a `/status.php` hlásí nainstalovanou instanci mimo maintenance. Když kontrola selže, soubory se nezmění. Nedokončená první instalace evidenci nedostane.
 
-Čistá instalace nemá `config.php` ani `state/installed-version`. Tu `deploy.sh` spustí. Když `config.php` už existuje a evidence verze chybí, nejde o čistou instalaci a `deploy.sh` Compose nespustí. Běžící stack ověří `post-deploy.sh`. Zastavený stack se nespouští deployem. `./scripts/record-installed.sh --confirm nextcloud-gr` přečte `version.php` a `PG_VERSION` bez chybějícího stavového souboru. Stejné obrazy spustí jen když data na disku už tuto verzi mají. Když verzi nelze bezpečně zjistit, skončí bez startu a bez zápisu.
+Čistá instalace nemá `config.php` ani `state/installed-version`. Tu `deploy.sh` spustí. `config.php` bez `installed => true` je nedokončená instalace: stejné obrazy se smí spustit, ale stavové soubory vzniknou až když `post-deploy.sh` uvidí nainstalovaný Nextcloud. `config.php` s `installed => true` a bez evidence verze deploy nespustí. `./scripts/record-installed.sh --confirm nextcloud-gr` tehdy přečte `version.php` a `PG_VERSION`. Před startem aplikace deploy sjednotí vlastníka tabulek `oc_*` s `PG_USER`. Nemění heslo v logu, nedává roli SUPERUSER a nemaže datové adresáře.
 
 ## Běžný deploy
 

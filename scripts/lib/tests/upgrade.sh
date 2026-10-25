@@ -65,16 +65,53 @@ test_version_guard()
 
     rm -f "${installed}"
     printf '<?php\n' > "${config}"
+    message="$(deploy_version_decision "${installed}" "${config}" "35.0.2-fpm")" \
+        || fail "An unfinished config.php was refused: ${message}"
+    [[ "${message}" == "unfinished" ]] \
+        || fail "A config.php without installed => true was ${message}."
+
+    printf '%s\n' '<?php' "'installed' => true," > "${config}"
     status=0
     message="$(deploy_version_decision "${installed}" "${config}" "35.0.2-fpm")" || status=$?
     [[ "${status}" -ne 0 ]] \
-        || fail "Existing config.php without a version file was allowed."
-    [[ "${message}" != "first-install" ]] \
-        || fail "Existing config.php without a version file was treated as a first installation."
+        || fail "An installed config.php without a version file was allowed."
+    [[ "${message}" != "first-install" && "${message}" != "unfinished" ]] \
+        || fail "An installed config.php was treated as ${message}."
     [[ "${message}" == *"record-installed.sh"* ]] \
         || fail "The missing state file did not point at record-installed.sh: ${message}"
     [[ "${message}" == *"not a first install"* ]] \
         || fail "The missing state file was not described as an existing installation: ${message}"
+
+    [[ "$(postgres_owner_action "" "nextcloud")" == "none" ]] \
+        || fail "An empty database was not left alone."
+    [[ "$(postgres_owner_action "nextcloud" "nextcloud")" == "aligned" ]] \
+        || fail "A matching database owner was reassigned."
+    [[ "$(postgres_owner_action "oc_admin" "oc_admin11")" == "reassign" ]] \
+        || fail "A different table owner was accepted."
+    if postgres_owner_action "oc_admin" "oc-admin"; then
+        fail "A role name with a hyphen was accepted."
+    fi
+
+    printf '%s\n' \
+        '<?php' \
+        '  '"'"'dbtype'"'"' => '"'"'pgsql'"'"',' \
+        '  '"'"'dbname'"'"' => '"'"'nextcloud'"'"',' \
+        '  '"'"'dbuser'"'"' => '"'"'oc_admin11'"'"',' \
+        '  '"'"'dbpassword'"'"' => '"'"'old-secret'"'"',' \
+        '  '"'"'dbhost'"'"' => '"'"'postgresql'"'"',' \
+        '  '"'"'version'"'"' => '"'"'35.0.2.2'"'"',' \
+        ');' > "${config}"
+    nextcloud_config_set_database "${config}" nextcloud nextcloud 'abc+/=' postgresql \
+        || fail "config.php database identity was not rewritten."
+    grep -q "'dbuser' => 'nextcloud'" "${config}" \
+        || fail "config.php still names the old database user."
+    grep -q "'dbpassword' => 'abc+/='" "${config}" \
+        || fail "config.php password was not updated."
+    grep -q "'version' => '35.0.2.2'" "${config}" \
+        || fail "config.php version was rewritten."
+    if nextcloud_config_marked_installed "${config}"; then
+        fail "Rewriting the database identity marked Nextcloud installed."
+    fi
 
     printf '18\n' > "${work}/pg"
     message="$(deploy_postgres_major_decision "${work}/pg" "docker.io/library/postgres:18.6")" \

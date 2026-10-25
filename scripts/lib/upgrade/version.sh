@@ -233,6 +233,87 @@ nextcloud_config_marked_installed()
 }
 
 ###############################################################################
+# Point an existing config.php at one database identity.
+# Does not add the installed flag and does not remove other lines.
+#
+# Arguments:
+#   $1 - config.php
+#   $2 - database name
+#   $3 - database user
+#   $4 - database password
+#   $5 - database host
+#
+###############################################################################
+
+nextcloud_config_set_database()
+{
+    local file="$1"
+    local db_name="$2"
+    local db_user="$3"
+    local db_pass="$4"
+    local db_host="$5"
+    local tmp
+    local line
+    local key
+    local value
+    local prefix
+    local comma
+    local replaced
+    local found=0
+
+    [[ -f "${file}" ]] || return 1
+
+    for value in "${db_name}" "${db_user}" "${db_pass}" "${db_host}"
+    do
+        [[ -n "${value}" && "${value}" != *[\'\"\\]* && "${value}" != *$'\n'* ]] \
+            || return 1
+    done
+
+    tmp="$(mktemp "$(dirname "${file}")/.config.XXXXXX")" || return 1
+
+    while IFS= read -r line || [[ -n "${line}" ]]
+    do
+        replaced=0
+
+        for key in dbname dbuser dbpassword dbhost
+        do
+            if [[ "${line}" =~ ^([[:space:]]*[\'\"]${key}[\'\"][[:space:]]*=\>[[:space:]]*)[\'\"][^\'\"]*[\'\"](,?)[[:space:]]*$ ]]; then
+                prefix="${BASH_REMATCH[1]}"
+                comma="${BASH_REMATCH[2]}"
+
+                case "${key}" in
+                    dbname) value="${db_name}" ;;
+                    dbuser) value="${db_user}" ;;
+                    dbpassword) value="${db_pass}" ;;
+                    dbhost) value="${db_host}" ;;
+                esac
+
+                printf "%s'%s'%s\n" "${prefix}" "${value}" "${comma}"
+                replaced=1
+                found=$((found + 1))
+                break
+            fi
+        done
+
+        if [[ "${replaced}" -eq 0 ]]; then
+            printf '%s\n' "${line}"
+        fi
+    done < "${file}" > "${tmp}"
+
+    if [[ "${found}" -lt 4 ]]; then
+        rm -f "${tmp}"
+        return 1
+    fi
+
+    chown --reference="${file}" "${tmp}" 2>/dev/null || true
+    chmod --reference="${file}" "${tmp}" || {
+        rm -f "${tmp}"
+        return 1
+    }
+    mv -f "${tmp}" "${file}"
+}
+
+###############################################################################
 # Decide whether Nextcloud tables already belong to the configured role.
 #
 # Arguments:

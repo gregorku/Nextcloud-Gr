@@ -41,6 +41,6 @@ PostgreSQL 18.6, Redis 8.10.2, Nextcloud `35.0.2-fpm` (PHP 8.5), Nginx 1.30.6 a 
 
 `./scripts/test.sh --static` ověřuje checkout bez Dockeru a bez zápisu do `/docker-data`.
 
-`deploy.sh` nespustí jinou verzi Nextcloudu, než jaká je zapsaná v `/docker-data/nextcloud-gr/state/installed-version`. Změna tagu patří do `./scripts/upgrade.sh`. Existující `config.php` bez tohoto souboru není první instalace. Ověření a doplnění evidence je `./scripts/record-installed.sh --confirm nextcloud-gr`.
+`deploy.sh` nespustí jinou verzi Nextcloudu, než jaká je zapsaná v `/docker-data/nextcloud-gr/state/installed-version`. Změna tagu patří do `./scripts/upgrade.sh`. `config.php` s `installed => true` a bez tohoto souboru není první instalace. Ověření a doplnění evidence je `./scripts/record-installed.sh --confirm nextcloud-gr`.
 
 Podrobnosti jsou v `docs/`.
