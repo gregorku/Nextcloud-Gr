@@ -65,7 +65,7 @@ Reset vyprázdní jen obsah těchto adresářů, ne jejich rodiče:
 
 - `NEXTCLOUD_HTML_HOST_DIR` (`/docker-data/nextcloud-gr/html`) — kód a `config.php`
 - `/docker-data/nextcloud-gr/state` — evidence nainstalované verze
-- `NEXTCLOUD_DATA_HOST_DIR` (`/nextcloud-data/test`) — datadir včetně `ncadmin`
+- `NEXTCLOUD_DATA_HOST_DIR` (`/nextcloud-data/data`) — datadir včetně `ncadmin`
 - `POSTGRESQL_HOST_DIR` (`/postgresql-data/data`) — cluster PostgreSQL této instance
 
 ## Běžný deploy

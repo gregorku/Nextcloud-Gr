@@ -319,7 +319,7 @@ test_compose_bindings()
     action="$(deploy_install_action false present present)"
     [[ "${action}" == "blocked" ]] \
         || fail "An existing account was classified as ${action}."
-    reset_directory_may_be_emptied /nextcloud-data/test /nextcloud-data \
+    reset_directory_may_be_emptied /nextcloud-data/data /nextcloud-data \
         /incus-dir/git/Nextcloud-Gr /docker-data/backups/nextcloud-gr \
         || fail "The Nextcloud data directory was refused."
     reset_directory_may_be_emptied /docker-data/nextcloud-gr/html /docker-data \
