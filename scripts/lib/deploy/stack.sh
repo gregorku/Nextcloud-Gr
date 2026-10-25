@@ -113,6 +113,10 @@ sync_item_contents()
 
         mkdir -p "${dst}"
 
+        if [[ -z "$(ls -A "${src}")" ]]; then
+            fail "Refusing rsync --delete from an empty source: ${src}"
+        fi
+
         if command -v rsync >/dev/null 2>&1; then
 
             rsync -a --delete "${src}/" "${dst}/" \

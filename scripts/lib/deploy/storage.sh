@@ -73,20 +73,28 @@ deploy_ensure_network()
 
     local subnet
     local gateway
-    local existing
+    local existing_subnet
+    local existing_gateway
 
     subnet="$(env_get DOCKER_NETWORK_SUBNET)"
     gateway="$(env_get DOCKER_NETWORK_GATEWAY)"
 
     if docker network inspect "${NETWORK_INTERNAL}" >/dev/null 2>&1; then
-        existing="$(
+        existing_subnet="$(
             docker network inspect \
                 --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' \
                 "${NETWORK_INTERNAL}"
         )"
+        existing_gateway="$(
+            docker network inspect \
+                --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' \
+                "${NETWORK_INTERNAL}"
+        )"
 
-        [[ "${existing}" == "${subnet}" ]] \
-            || fail "Docker network ${NETWORK_INTERNAL} already uses ${existing}, not ${subnet}."
+        [[ "${existing_subnet}" == "${subnet}" ]] \
+            || fail "Docker network ${NETWORK_INTERNAL} already uses ${existing_subnet}, not ${subnet}."
+        [[ "${existing_gateway}" == "${gateway}" ]] \
+            || fail "Docker network ${NETWORK_INTERNAL} gateway is ${existing_gateway}, not ${gateway}."
 
         ok "Docker network ${NETWORK_INTERNAL} already uses ${subnet}."
         return 0
