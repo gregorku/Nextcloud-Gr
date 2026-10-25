@@ -49,6 +49,7 @@ services:
 
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SKIP_FIX_PERMS: "1"
 
     networks:
       - nextcloud-gr
