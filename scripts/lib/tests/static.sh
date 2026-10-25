@@ -174,6 +174,12 @@ test_compose_bindings()
     grep -Fq 'installed:[[:space:]]*true' \
         "${root}/compose/50-cron.yml" \
         || fail "Cron healthcheck does not require an installed Nextcloud."
+    grep -Fq 'installed:[[:space:]]*true' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "The application healthcheck treats open port 9000 as a finished install."
+    grep -Fq '"installed":true' \
+        "${root}/compose/40-nginx.yml" \
+        || fail "Nginx treats any HTTP response from status.php as success."
 
     if grep -n 'docker exec -u postgres' \
         "${root}/scripts/lib/deploy/compose.sh" \
@@ -226,11 +232,15 @@ test_compose_bindings()
     grep -Fq 'maintenance:install' \
         "${root}/scripts/lib/deploy/compose.sh" \
         || fail "Deploy does not run maintenance:install."
-    if grep -Eq '^[[:space:]]+NEXTCLOUD_ADMIN_USER:' \
-        "${root}/compose/30-nextcloud-fpm.yml"
-    then
-        fail "The image entrypoint still receives the admin user and can retry a partial install."
-    fi
+    grep -Eq '^[[:space:]]+NEXTCLOUD_ADMIN_USER: ' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "The image entrypoint does not receive NEXTCLOUD_ADMIN_USER."
+    grep -Eq '^[[:space:]]+NEXTCLOUD_ADMIN_PASSWORD: ' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "The image entrypoint does not receive NEXTCLOUD_ADMIN_PASSWORD."
+    grep -Fq 'deploy_php_fpm_is_listening' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy can run maintenance:install before the image entrypoint finishes."
     grep -Fq -- '--confirm' "${root}/scripts/reset-test.sh" \
         || fail "The test reset has no confirm gate."
     if grep -E 'rm -rf (/|/(docker-data|nextcloud-data|postgresql-data))([/" ]|$)' \

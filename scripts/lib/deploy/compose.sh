@@ -582,14 +582,19 @@ deploy_run_maintenance_install()
     log="$(mktemp)"
     chmod 600 "${secret}" "${log}"
 
-    printf 'NEXTCLOUD_ADMIN_USER=%s\nNEXTCLOUD_ADMIN_PASSWORD=%s\n' \
+    # Host .env names (PG_*) are not the names the image documents.
+    # Pass the image names explicitly. docker exec does not print them.
+    printf 'NEXTCLOUD_ADMIN_USER=%s\nNEXTCLOUD_ADMIN_PASSWORD=%s\nPOSTGRES_DB=%s\nPOSTGRES_USER=%s\nPOSTGRES_PASSWORD=%s\nPOSTGRES_HOST=postgresql\n' \
         "$(env_get NEXTCLOUD_ADMIN_USER)" \
         "$(env_get NEXTCLOUD_ADMIN_PASSWORD)" \
+        "$(env_get PG_DB)" \
+        "$(env_get PG_USER)" \
+        "$(env_get PG_PASS)" \
         > "${secret}"
 
     if ! docker exec -u www-data --env-file "${secret}" \
         "${NEXTCLOUD_APP_CONTAINER}" \
-        bash -c 'php /var/www/html/occ maintenance:install -n --admin-user "$NEXTCLOUD_ADMIN_USER" --admin-pass "$NEXTCLOUD_ADMIN_PASSWORD" --data-dir /var/www/html/data --database pgsql --database-name "$POSTGRES_DB" --database-user "$POSTGRES_USER" --database-pass "$POSTGRES_PASSWORD" --database-host "$POSTGRES_HOST"' \
+        sh -c 'php /var/www/html/occ maintenance:install -n --admin-user "$NEXTCLOUD_ADMIN_USER" --admin-pass "$NEXTCLOUD_ADMIN_PASSWORD" --data-dir /var/www/html/data --database pgsql --database-name "$POSTGRES_DB" --database-user "$POSTGRES_USER" --database-pass "$POSTGRES_PASSWORD" --database-host "$POSTGRES_HOST"' \
         > "${log}" 2>&1
     then
         status=1
@@ -632,6 +637,64 @@ deploy_set_trusted_domains()
     set +f
 }
 
+###############################################################################
+# Port 9000 opens only after the entrypoint has exec'd php-fpm.
+# occ can answer earlier, while that entrypoint is still copying
+# /var/www/html. Installing in that window races the copy.
+###############################################################################
+
+deploy_php_fpm_is_listening()
+{
+    docker exec "${NEXTCLOUD_APP_CONTAINER}" \
+        php -r 'exit(@fsockopen("127.0.0.1", 9000) ? 0 : 1);' \
+        >/dev/null 2>&1
+}
+
+###############################################################################
+# Rename only an admin home that has no database account.
+# Does not stop the container and does not touch any other directory,
+# including a previous .incomplete-* preserve.
+###############################################################################
+
+deploy_preserve_orphan_admin_if_needed()
+{
+    local data_dir
+    local admin_user
+    local db_name
+    local home=""
+    local table=""
+    local preserved
+    local status=0
+
+    if nextcloud_config_marked_installed \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php"
+    then
+        return 0
+    fi
+
+    data_dir="$(env_get NEXTCLOUD_DATA_HOST_DIR)"
+    admin_user="$(env_get NEXTCLOUD_ADMIN_USER)"
+    db_name="$(env_get PG_DB)"
+
+    if ! home="$(deploy_existing_admin_home "${data_dir}" "${admin_user}")"; then
+        status=$?
+        [[ "${status}" -eq 1 ]] && return 0
+        fail "NEXTCLOUD_ADMIN_USER cannot be used as a data directory name. Nothing was deleted."
+    fi
+
+    if table="$(deploy_database_has_admin_uid "${db_name}" "${admin_user}")"; then
+        fail "Nextcloud is not installed, but ${admin_user} is already in ${table} (${home}). maintenance:install cannot create that account again. Run ./scripts/reset-test.sh --confirm ${STACK_NAME} for this test instance. Nothing was deleted."
+    else
+        status=$?
+        [[ "${status}" -eq 1 ]] \
+            || fail "Could not check whether ${admin_user} already exists in PostgreSQL. Nothing was deleted."
+    fi
+
+    preserved="$(deploy_preserve_orphan_admin_home "${data_dir}" "${admin_user}")" \
+        || fail "Could not preserve ${home}. Nothing was deleted."
+    info "Preserved unfinished admin home ${home} as ${preserved}. PostgreSQL has no ${admin_user} account. The files were renamed, not deleted."
+}
+
 deploy_install_nextcloud_if_needed()
 {
     local attempt=0
@@ -639,17 +702,19 @@ deploy_install_nextcloud_if_needed()
 
     while [[ "${attempt}" -lt 150 ]]
     do
-        if installed="$(nextcloud_occ_status_value installed 2>/dev/null)" \
-            && [[ -n "${installed}" ]]
-        then
-            break
+        if deploy_php_fpm_is_listening; then
+            installed="$(nextcloud_occ_status_value installed 2>/dev/null || true)"
+            if [[ "${installed}" == "true" || "${installed}" == "false" ]]; then
+                break
+            fi
         fi
+        installed=""
         attempt=$((attempt + 1))
         sleep 2
     done
 
     [[ -n "${installed}" ]] \
-        || fail "occ status did not report installed. Nextcloud was not recorded as installed. No data was deleted."
+        || fail "PHP-FPM did not stay up long enough for occ status. Nextcloud was not recorded as installed. No data was deleted."
 
     if [[ "${installed}" == "true" ]]; then
         if ! nextcloud_config_marked_installed \
@@ -668,10 +733,11 @@ deploy_install_nextcloud_if_needed()
     fi
 
     info "Running maintenance:install once."
+    deploy_preserve_orphan_admin_if_needed
     deploy_run_maintenance_install
     deploy_set_trusted_domains
     docker exec "${NEXTCLOUD_APP_CONTAINER}" \
-        /docker-entrypoint-hooks.d/post-installation/10-apcu.sh \
+        sh /docker-entrypoint-hooks.d/post-installation/10-apcu.sh \
         || fail "The APCu hook failed after installation. State was not recorded. No data was deleted."
 }
 
@@ -785,10 +851,14 @@ deploy_compose()
     deploy_align_database_owner
     deploy_prepare_unfinished_install
 
-    log_info "Starting the remaining services."
+    log_info "Starting Redis and Nextcloud before cron and Nginx."
+
+    compose_up "${REDIS_SERVICE}" "${NEXTCLOUD_SERVICE}"
+    deploy_install_nextcloud_if_needed
+
+    log_info "Starting Nginx and cron."
 
     compose_up
-    deploy_install_nextcloud_if_needed
     deploy_require_running_install
 
     log_success "Nextcloud-Gr is installed and running."

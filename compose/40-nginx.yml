@@ -43,7 +43,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - wget -q -O /dev/null http://127.0.0.1/status.php
+        - wget -q -O - http://127.0.0.1/status.php | grep -q '"installed":true'
 
       interval: 30s
 
