@@ -89,7 +89,9 @@ Description:
     Persistent data in ${DATA_DIR} is not removed.
 
     deploy.sh refuses a NEXTCLOUD_TAG that differs from the installed
-    version. A version change belongs to ./scripts/upgrade.sh.
+    version. A version change belongs to ./scripts/upgrade.sh. An
+    existing config.php without state/installed-version is not started
+    here either.
     Afterwards post-deploy.sh and test.sh run.
 
 EOF

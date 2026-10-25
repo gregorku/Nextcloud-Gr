@@ -66,6 +66,10 @@ source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/deploy/stack.sh"
 source "${SCRIPT_DIR}/lib/mount.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/deploy/state-file.sh"
+source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
+source "${SCRIPT_DIR}/lib/post-deploy/checks.sh"
+source "${SCRIPT_DIR}/lib/deploy/record-state.sh"
 source "${SCRIPT_DIR}/lib/upgrade/php.sh"
 source "${SCRIPT_DIR}/lib/upgrade/apps.sh"
 source "${SCRIPT_DIR}/lib/upgrade/sequence.sh"
@@ -118,6 +122,7 @@ run_static_tests()
 {
     source "${SCRIPT_DIR}/lib/tests/static.sh"
     source "${SCRIPT_DIR}/lib/tests/upgrade.sh"
+    source "${SCRIPT_DIR}/lib/tests/state.sh"
     source "${SCRIPT_DIR}/lib/tests/backup.sh"
 
     RESTORE_SKIP_USER_DATA=yes
@@ -132,6 +137,7 @@ run_static_tests()
     test_script_modes
     test_external_validators
     test_version_guard
+    test_install_state
     test_php_matrix
     test_custom_app_compatibility
     test_upgrade_sequence

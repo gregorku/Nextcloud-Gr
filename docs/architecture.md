@@ -56,6 +56,8 @@ Uvnitř kontejneru je uživatel Nextcloudu `www-data` uid 33 a uživatel Postgre
 
 ## Oddělení verze
 
-`NEXTCLOUD_TAG` v `.env.example` je framework hodnota. `update-env.sh` ji zkopíruje do runtime `.env`, ale tím upgrade nespustí. `deploy.sh` porovná tag se souborem `state/installed-version`. Liší-li se, skončí a odkáže na `upgrade.sh`. Stejná kontrola platí pro hlavní verzi PostgreSQL v `state/postgres-major`. Image entrypoint by při startu novějšího kódu migraci spustil sám, proto se k `compose up` při neshodě vůbec nedojde.
+`NEXTCLOUD_TAG` v `.env.example` je framework hodnota. `update-env.sh` ji zkopíruje do runtime `.env`, ale tím upgrade nespustí. `deploy.sh` porovná tag se souborem `state/installed-version`. Liší-li se, skončí a odkáže na `upgrade.sh`. Stejná kontrola platí pro hlavní verzi PostgreSQL v `state/postgres-major` a pro `PG_VERSION` v datovém adresáři. Neprázdný datový adresář bez jediného čitelného `PG_VERSION` se nespustí. Image entrypoint by při startu novějšího kódu migraci spustil sám, proto se k `compose up` při neshodě vůbec nedojde.
+
+Chybějící `installed-version` při existujícím `config.php` není čistá instalace. `deploy.sh` ji nepřebírá. `record-installed.sh` ověří nasazený obraz, verzi z `occ` a hlavní verzi PostgreSQL bez toho stavového souboru. Jiný tag nebo jiný major PostgreSQL nespustí.
 
 Cron má `NEXTCLOUD_UPDATE=0` a vlastní entrypoint `/cron.sh`. Oficiální image spouští instalaci a upgrade jen u výchozího příkazu `php-fpm`. Upgrade tedy běží jen v kontejneru `nextcloud`.

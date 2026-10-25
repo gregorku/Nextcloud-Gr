@@ -6,6 +6,8 @@ https://github.com/nextcloud/docker#update-to-a-newer-version
 
 `deploy.sh` a `reload.sh` verzi Nextcloudu nemění. Když `state/installed-version` nesouhlasí s `NEXTCLOUD_TAG`, deploy skončí dřív, než stáhne image a než spustí kontejner. Entrypoint oficiálního image by jinak při startu `php-fpm` migraci provedl sám.
 
+Když `config.php` existuje a `installed-version` chybí, upgrade.sh verzi nehádá. Evidenci doplní `./scripts/record-installed.sh --confirm nextcloud-gr` až když nasazený obraz, kód na disku a PostgreSQL major souhlasí s pinem. Jinou verzi tím nespouští.
+
 ## Povolený krok
 
 Z `35.0.2-fpm` lze krokem verze jít na novější `35.x.y-fpm` nebo na následující hlavní řadu. To samo nestačí. `scripts/lib/upgrade/php.sh` obsahuje jen ověřenou matici. K 2026-10-20 je v ní Nextcloud 35 s PHP 8.3, 8.4 a 8.5 podle [system requirements](https://docs.nextcloud.com/server/35/admin_manual/installation/system_requirements.html). Neznámá hlavní verze, včetně 36, se odmítne, dokud se matice nerozšíří z dokumentace té řady. PHP image se čte z cílového kontejneru a porovná s maticí této verze, ne s pevným rozsahem pro všechny budoucí řady.

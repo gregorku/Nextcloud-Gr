@@ -69,6 +69,12 @@ test_version_guard()
     message="$(deploy_version_decision "${installed}" "${config}" "35.0.2-fpm")" || status=$?
     [[ "${status}" -ne 0 ]] \
         || fail "Existing config.php without a version file was allowed."
+    [[ "${message}" != "first-install" ]] \
+        || fail "Existing config.php without a version file was treated as a first installation."
+    [[ "${message}" == *"record-installed.sh"* ]] \
+        || fail "The missing state file did not point at record-installed.sh: ${message}"
+    [[ "${message}" == *"not a first install"* ]] \
+        || fail "The missing state file was not described as an existing installation: ${message}"
 
     printf '18\n' > "${work}/pg"
     message="$(deploy_postgres_major_decision "${work}/pg" "docker.io/library/postgres:18.6")" \

@@ -41,7 +41,9 @@ Na tomto checkoutu ty mounty nejsou. Jejich filesystém, vlastníka a test zápi
 
 `init.sh` zkopíruje Compose a konfiguraci. Nevytváří Docker síť, protože subnet ještě není známý. `deploy.sh` síť vytvoří, připraví adresáře, zapíše `runtime/redis.conf` a `runtime/real-ip.conf` a teprve potom spustí Compose.
 
-`post-deploy.sh` zapíše `state/installed-version` až když `occ status` souhlasí s `NEXTCLOUD_TAG` a `/status.php` nehlásí maintenance. Do té doby druhý `deploy.sh` při existujícím `config.php` odmítne start, aby entrypoint nespustil migraci neznámé verze.
+`post-deploy.sh` počká na healthchecky. Stavové soubory zapíše atomicky až když běžící obrazy odpovídají pinu, `occ status` souhlasí s `NEXTCLOUD_TAG`, `needsDbUpgrade` je false, hlavní verze PostgreSQL souhlasí s `POSTGRES_IMAGE` a s `PG_VERSION`, a `/status.php` hlásí nainstalovanou instanci mimo maintenance. Když kontrola selže, soubory se nezmění. Nedokončená první instalace evidenci nedostane.
+
+Čistá instalace nemá `config.php` ani `state/installed-version`. Tu `deploy.sh` spustí. Když `config.php` už existuje a evidence verze chybí, nejde o čistou instalaci a `deploy.sh` Compose nespustí. Běžící stack ověří `post-deploy.sh`. Zastavený stack se nespouští deployem. `./scripts/record-installed.sh --confirm nextcloud-gr` přečte `version.php` a `PG_VERSION` bez chybějícího stavového souboru. Stejné obrazy spustí jen když data na disku už tuto verzi mají. Když verzi nelze bezpečně zjistit, skončí bez startu a bez zápisu.
 
 ## Běžný deploy
 
