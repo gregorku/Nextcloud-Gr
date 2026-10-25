@@ -15,9 +15,7 @@
 ###############################################################################
 
 services:
-
   redis:
-
     image: ${REDIS_IMAGE}
 
     container_name: nextcloud-gr-redis
@@ -34,11 +32,9 @@ services:
       - /usr/local/etc/redis/redis.conf
 
     volumes:
-
-      - ./runtime/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ${REDIS_CONFIG_FILE:?REDIS_CONFIG_FILE není nastaven}:/usr/local/etc/redis/redis.conf:ro
 
     healthcheck:
-
       test:
         - CMD-SHELL
         - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG
@@ -52,15 +48,12 @@ services:
       start_period: 10s
 
     environment:
-
       REDIS_PASSWORD: ${REDIS_PASSWORD}
 
     networks:
-
       - nextcloud-gr
 
     logging:
-
       driver: json-file
 
       options:
