@@ -75,15 +75,18 @@ services:
 
       test:
         - CMD-SHELL
-        - ps -o args= 1 | grep -q cron.sh
+        - >-
+          ps -o args= 1 | grep -q cron.sh
+          && su -s /bin/bash www-data -c 'php /var/www/html/occ status'
+          | grep -Eq 'installed:[[:space:]]*true'
 
-      interval: 60s
+      interval: 30s
 
-      timeout: 5s
+      timeout: 20s
 
-      retries: 3
+      retries: 5
 
-      start_period: 30s
+      start_period: 60s
 
     networks:
 

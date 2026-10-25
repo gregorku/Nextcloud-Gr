@@ -63,10 +63,10 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN}
 
     volumes:
-      - ../configs/nginx/nginx.conf:/etc/nginx/conf.d/nextcloud.conf:ro
-      - ../runtime/real-ip.conf:/etc/nginx/real-ip.conf:ro
-      - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html:ro
-      - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data:ro
+      - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html
+      - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data
+      - ../configs/nextcloud/hooks/10-apcu.sh:/docker-entrypoint-hooks.d/post-installation/10-apcu.sh:ro
+      - ../configs/nextcloud/hooks/10-apcu.sh:/docker-entrypoint-hooks.d/post-upgrade/10-apcu.sh:ro
 
     depends_on:
       postgresql:

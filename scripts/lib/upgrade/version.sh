@@ -128,10 +128,15 @@ deploy_version_decision()
     fi
 
     if [[ -f "${config_php}" ]]; then
-        printf 'config.php exists but %s does not. This is an existing installation, not a first install. deploy.sh will not start Compose and will not write state files. If the stack is already running the pinned images, run ./scripts/post-deploy.sh. If it is not running, run ./scripts/record-installed.sh --confirm %s. That command reads the deployed code and PG_VERSION without this state file and starts the pinned images only when they already match that data.\n' \
-            "${installed_file}" \
-            "${STACK_NAME}"
-        return 1
+        if nextcloud_config_marked_installed "${config_php}"; then
+            printf 'config.php exists but %s does not. This is an existing installation, not a first install. deploy.sh will not start Compose and will not write state files. If the stack is already running the pinned images, run ./scripts/post-deploy.sh. If it is not running, run ./scripts/record-installed.sh --confirm %s. That command reads the deployed code and PG_VERSION without this state file and starts the pinned images only when they already match that data.\n' \
+                "${installed_file}" \
+                "${STACK_NAME}"
+            return 1
+        fi
+
+        printf 'unfinished\n'
+        return 0
     fi
 
     printf 'first-install\n'
@@ -206,6 +211,58 @@ deploy_postgres_major_decision()
 
     printf 'first\n'
     return 0
+}
+
+###############################################################################
+# config.php marks a finished Nextcloud installation with installed => true.
+# A file without that key is an unfinished install. PHP is not executed.
+#
+# Arguments:
+#   $1 - config.php path
+#
+###############################################################################
+
+nextcloud_config_marked_installed()
+{
+    local file="$1"
+
+    [[ -f "${file}" ]] || return 1
+    grep -Eq \
+        "['\"]installed['\"][[:space:]]*=>[[:space:]]*true" \
+        "${file}"
+}
+
+###############################################################################
+# Decide whether Nextcloud tables already belong to the configured role.
+#
+# Arguments:
+#   $1 - Current owner, empty when oc_* tables do not exist
+#   $2 - PG_USER
+#
+# Prints none, aligned or reassign.
+#
+###############################################################################
+
+postgres_owner_action()
+{
+    local owner="$1"
+    local desired="$2"
+
+    [[ "${desired}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || return 1
+
+    if [[ -z "${owner}" ]]; then
+        printf 'none\n'
+        return 0
+    fi
+
+    [[ "${owner}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || return 1
+
+    if [[ "${owner}" == "${desired}" ]]; then
+        printf 'aligned\n'
+        return 0
+    fi
+
+    printf 'reassign\n'
 }
 
 ###############################################################################
