@@ -53,8 +53,8 @@ deploy_postgres_sql()
     local database="$1"
     local sql="$2"
 
-    docker exec -u postgres -i "${POSTGRESQL_CONTAINER}" \
-        psql -v ON_ERROR_STOP=1 -q -d "${database}" -f - \
+    postgres_container_client "${database}" \
+        psql -v ON_ERROR_STOP=1 -q -f - \
         <<<"${sql}"
 }
 
@@ -63,8 +63,8 @@ deploy_postgres_value()
     local database="$1"
     local sql="$2"
 
-    docker exec -u postgres -i "${POSTGRESQL_CONTAINER}" \
-        psql -v ON_ERROR_STOP=1 -q -tA -d "${database}" -f - \
+    postgres_container_client "${database}" \
+        psql -v ON_ERROR_STOP=1 -q -tA -f - \
         <<<"${sql}"
 }
 
@@ -122,6 +122,8 @@ deploy_align_database_owner()
     [[ "${db_user}" != "postgres" && "${db_user}" != "root" ]] \
         || fail "PG_USER must be the application role, not ${db_user}."
 
+    # "postgres" is the maintenance database created by initdb.
+    # The login role is PG_USER, not a role named postgres.
     present="$(deploy_postgres_value postgres \
         "SELECT 1 FROM pg_database WHERE datname = '${db_name}'")" \
         || fail "Could not read pg_database. No data was deleted."

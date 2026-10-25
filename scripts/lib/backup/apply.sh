@@ -56,13 +56,12 @@ restore_snapshot_database()
     backup_create_private_dir "$(dirname "${output}")" || return 1
     backup_create_private_file "${output}" || return 1
 
-    if ! docker exec -u postgres "${POSTGRESQL_CONTAINER}" \
+    if ! postgres_container_client "${db_name}" \
         pg_dump \
-            -U "${db_user}" \
-            -d "${db_name}" \
             -Fc \
             --no-owner \
             --no-acl \
+        < /dev/null \
         > "${output}"
     then
         rm -f "${output}"
@@ -96,10 +95,8 @@ restore_load_database()
 
     [[ -n "${db_user}" && -n "${db_name}" ]] || return 1
 
-    if ! docker exec -i -u postgres "${POSTGRESQL_CONTAINER}" \
+    if ! postgres_container_client "${db_name}" \
         pg_restore \
-            -U "${db_user}" \
-            -d "${db_name}" \
             --clean \
             --if-exists \
             --no-owner \

@@ -173,6 +173,20 @@ test_compose_bindings()
         "${root}/compose/50-cron.yml" \
         || fail "Cron healthcheck does not require an installed Nextcloud."
 
+    if grep -n 'docker exec -u postgres' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        "${root}/scripts/lib/backup/postgres.sh" \
+        "${root}/scripts/lib/backup/apply.sh" \
+        "${root}/scripts/backup.sh"
+    then
+        fail "A PostgreSQL client still logs in as the OS role postgres."
+    fi
+
+    grep -Fq -- '-U "${db_user}"' "${root}/scripts/lib/docker.sh" \
+        || fail "PostgreSQL clients are not started as PG_USER."
+    grep -Fq -- '-h 127.0.0.1' "${root}/scripts/lib/docker.sh" \
+        || fail "PostgreSQL clients still depend on peer authentication."
+
     if grep -R -n -E '0\.0\.0\.0:|5432:5432|6379:6379|9000:9000' \
         "${root}/compose" "${root}/compose.yml"; then
         fail "Compose publishes a forbidden address or port."

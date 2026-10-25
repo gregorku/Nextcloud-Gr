@@ -11,8 +11,9 @@
 #   Consistent PostgreSQL dump and restore through the local socket
 #   inside the PostgreSQL container.
 #
-#   pg_dump / pg_restore run as the postgres OS user. No host port is
-#   used. The password is not placed on the command line.
+#   pg_dump / pg_restore run inside the container as PG_USER.
+#   No host port is published. The password is not placed on the
+#   command line.
 #
 ###############################################################################
 
@@ -62,13 +63,12 @@ backup_dump_postgresql()
     backup_create_private_dir "$(dirname "${output}")"
     backup_create_private_file "${output}"
 
-    if ! docker exec -u postgres "${POSTGRESQL_CONTAINER}" \
+    if ! postgres_container_client "${db_name}" \
         pg_dump \
-            -U "${db_user}" \
-            -d "${db_name}" \
             -Fc \
             --no-owner \
             --no-acl \
+        < /dev/null \
         > "${output}"
     then
         fail "PostgreSQL dump failed."
@@ -104,10 +104,8 @@ backup_restore_postgresql()
     db_user="$(env_get PG_USER)"
     db_name="$(env_get PG_DB)"
 
-    if ! docker exec -i -u postgres "${POSTGRESQL_CONTAINER}" \
+    if ! postgres_container_client "${db_name}" \
         pg_restore \
-            -U "${db_user}" \
-            -d "${db_name}" \
             --clean \
             --if-exists \
             --no-owner \

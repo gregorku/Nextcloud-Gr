@@ -179,8 +179,9 @@ backup_dump_is_postgres_custom "${stage}/postgresql/nextcloud.dump" \
     || fail "pg_dump did not write a PostgreSQL custom-format archive."
 
 server_version="$(
-    docker exec -u postgres "${POSTGRESQL_CONTAINER}" \
-        psql -d "$(env_get PG_DB)" -tAc 'SHOW server_version' \
+    postgres_container_client "$(env_get PG_DB)" \
+        psql -tA -c 'SHOW server_version' \
+        < /dev/null \
         | tr -d '[:space:]'
 )"
 postgres_major="${server_version%%.*}"
