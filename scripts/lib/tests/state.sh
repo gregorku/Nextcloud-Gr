@@ -778,3 +778,305 @@ test_install_state()
 
     ok "Install state is recorded only after the running checks pass."
 }
+
+###############################################################################
+# Recovery of missing installed-version and postgres-major.
+# Temporary directories and stubs only. Docker is not called.
+###############################################################################
+
+test_evidence_recovery()
+{
+    print_section "Evidence recovery"
+
+    local root
+    local work
+    local config
+    local message
+    local status
+    local nc_image="docker.io/library/nextcloud:35.0.2-fpm"
+    local pg_image="docker.io/library/postgres:18.6"
+
+    root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    source "${SCRIPT_DIR}/lib/deploy/version-guard.sh"
+
+    grep -q 'deploy_record_verified_install' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy does not record evidence after a verified install."
+    grep -q 'deploy_assert_recover_allowed' \
+        "${root}/scripts/lib/deploy/version-guard.sh" \
+        || fail "Deploy does not verify an existing installation before Compose."
+    if grep -n 'record_installed_run' "${root}/scripts/deploy.sh"; then
+        fail "deploy.sh starts the record-installed command."
+    fi
+
+    work="$(mktemp -d)"
+    config="${work}/config.php"
+
+    # 1. New installation: no config and no state.
+    message="$(deploy_version_decision "${work}/installed-version" "${work}/missing.php" "35.0.2-fpm")" \
+        || fail "A new installation was refused: ${message}"
+    [[ "${message}" == "first-install" ]] \
+        || fail "A new installation was ${message}."
+    status=0
+    message="$(deploy_evidence_write_decision \
+        no "" "" "" "" "" "" "" \
+        35.0.2-fpm "${pg_image}" healthy missing missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A new installation was recorded before it existed."
+    [[ "${message}" == *"not a finished installation"* ]] \
+        || fail "An unfinished config was recorded: ${message}"
+
+    # 2. Existing installation with both state files.
+    printf '%s\n' '<?php' "'installed' => true," > "${config}"
+    printf '35.0.2-fpm\n' > "${work}/installed-version"
+    message="$(deploy_version_decision "${work}/installed-version" "${config}" "35.0.2-fpm")" \
+        || fail "Complete evidence was refused: ${message}"
+    [[ "${message}" == "unchanged" ]] \
+        || fail "Complete evidence was ${message}."
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" healthy 35.0.2-fpm 18)" \
+        || fail "Complete evidence was not left unchanged: ${message}"
+    [[ "${message}" == "unchanged" ]] \
+        || fail "Complete evidence decision was ${message}."
+
+    # 3. Installed, missing installed-version, running facts match.
+    rm -f "${work}/installed-version"
+    message="$(deploy_version_decision "${work}/installed-version" "${config}" "35.0.2-fpm")" \
+        || fail "Missing installed-version was refused before verification: ${message}"
+    [[ "${message}" == "recover" ]] \
+        || fail "Missing installed-version was ${message}."
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" running \
+        "${nc_image}" "${pg_image}" \
+        true 35.0.2 false false 18 "${nc_image}")" \
+        || fail "A matching running installation was refused: ${message}"
+    [[ "${message}" == "allow" ]] \
+        || fail "Matching recovery was ${message}."
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" healthy missing 18)" \
+        || fail "Missing installed-version was not recorded: ${message}"
+    [[ "${message}" == "record" ]] \
+        || fail "Missing installed-version write was ${message}."
+
+    # 4. installed-version present, postgres-major missing.
+    printf '18\n' > "${work}/pg"
+    message="$(deploy_postgres_major_decision "${work}/missing-major" "${pg_image}" 18)" \
+        || fail "Matching unrecorded PostgreSQL data was refused: ${message}"
+    [[ "${message}" == "unrecorded" ]] \
+        || fail "Missing postgres-major was ${message}."
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" healthy 35.0.2-fpm missing)" \
+        || fail "Missing postgres-major was not recorded: ${message}"
+    [[ "${message}" == "record" ]] \
+        || fail "Missing postgres-major write was ${message}."
+
+    # 5. Nextcloud code does not match the pin.
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        34.0.5 18 35.0.2-fpm "${pg_image}" running \
+        "${nc_image}" "${pg_image}" \
+        true 34.0.5 false false 18 "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different Nextcloud version was allowed."
+    [[ "${message}" == *"different version"* ]] \
+        || fail "Nextcloud mismatch was unclear: ${message}"
+    status=0
+    message="$(deploy_evidence_write_decision \
+        yes true 34.0.5 false false 34.0.5 18 18 \
+        35.0.2-fpm "${pg_image}" healthy missing missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different occ version was recorded."
+
+    # 6. PostgreSQL cluster major does not match the image.
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 16 35.0.2-fpm "${pg_image}" stopped \
+        "" "" "" "" "" "" "" "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different PostgreSQL major was allowed."
+    [[ "${message}" == *"different major"* ]] \
+        || fail "PostgreSQL mismatch was unclear: ${message}"
+    status=0
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 16 16 \
+        35.0.2-fpm "${pg_image}" healthy missing missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different running PostgreSQL major was recorded."
+
+    # 7. config.php exists but the installation is not finished.
+    printf '<?php\n' > "${config}"
+    message="$(deploy_version_decision "${work}/installed-version" "${config}" "35.0.2-fpm")" \
+        || fail "An unfinished config.php was refused: ${message}"
+    [[ "${message}" == "unfinished" ]] \
+        || fail "An unfinished config.php was ${message}."
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" running \
+        "${nc_image}" "${pg_image}" \
+        false 35.0.2 false false 18 "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "occ installed:false was treated as a finished install."
+    [[ "${message}" == *"maintenance:install"* ]] \
+        || fail "An incomplete install had no refusal: ${message}"
+
+    # 8. PostgreSQL data outside the Nextcloud directory.
+    mkdir -p "${work}/nextcloud-gr" "${work}/postgresql-data/data/18/docker"
+    printf '16\n' > "${work}/nextcloud-gr/PG_VERSION"
+    printf '18\n' > "${work}/postgresql-data/data/18/docker/PG_VERSION"
+    message="$(postgres_major_from_data_dir "${work}/postgresql-data/data")" \
+        || fail "PG_VERSION outside the Nextcloud directory was not read: ${message}"
+    [[ "${message}" == "18" ]] \
+        || fail "The PostgreSQL data directory parsed as ${message}."
+    status=0
+    postgres_major_from_data_dir "${work}/nextcloud-gr" >/dev/null || status=$?
+    [[ "${status}" -eq 4 ]] \
+        || fail "A PG_VERSION file outside the cluster layout returned ${status}."
+    message="$(postgres_major_from_version_text "postgres (PostgreSQL) 18.6 (Debian 18.6-1)")" \
+        || fail "postgres -V text was not read."
+    [[ "${message}" == "18" ]] \
+        || fail "postgres -V parsed as ${message}."
+
+    # 9. Unhealthy cron does not receive evidence. A shell is not crond.
+    status=0
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" unhealthy missing missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "An unhealthy cron was recorded."
+    [[ "${message}" == *"Cron health is unhealthy"* ]] \
+        || fail "Unhealthy cron was unclear: ${message}"
+    if cron_pid1_is_crond "$(printf '/bin/sh\0/cron.sh\0' | tr '\0' ' ')"; then
+        fail "cron.sh as PID 1 was accepted."
+    fi
+    cron_pid1_is_crond "$(printf 'busybox\0crond\0-f\0-L\0/dev/stdout\0' | tr '\0' ' ')" \
+        || fail "busybox crond was rejected."
+
+    # 10. occ or the database cannot be verified.
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" running \
+        "${nc_image}" "${pg_image}" \
+        "" "" "" "" "" "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A failed occ status was accepted."
+    [[ "${message}" == *"occ status failed"* ]] \
+        || fail "Failed occ was unclear: ${message}"
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" running \
+        "${nc_image}" "${pg_image}" \
+        true 35.0.2 false false "" "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "An unreadable running PostgreSQL major was accepted."
+    status=0
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false true 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" healthy missing missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "needsDbUpgrade was recorded."
+    [[ "${message}" == *"database upgrade"* ]] \
+        || fail "needsDbUpgrade was unclear: ${message}"
+
+    status=0
+    message="$(deploy_evidence_write_decision \
+        yes true 35.0.2 false false 35.0.2 18 18 \
+        35.0.2-fpm "${pg_image}" healthy 36.0.0-fpm missing)" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different installed-version was overwritten."
+    [[ "${message}" == *"Refusing to overwrite"* ]] \
+        || fail "Overwrite refusal was unclear: ${message}"
+
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" partial \
+        "" "" "" "" "" "" "" "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A partial stack was recovered."
+
+    status=0
+    message="$(deploy_missing_evidence_decision \
+        35.0.2 18 35.0.2-fpm "${pg_image}" running \
+        nextcloud:36.0.0-fpm "${pg_image}" \
+        true 35.0.2 false false 18 "${nc_image}")" || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "A different running image was recreated."
+    [[ "${message}" == *"will not recreate"* ]] \
+        || fail "Image mismatch had no refusal: ${message}"
+
+    # The writer calls state_write only for a verified record decision.
+    rm -f "${work}/wrote"
+    (
+        deploy_state_file_value() { printf 'missing\n'; }
+        deploy_installed_code_version() { printf '35.0.2\n'; }
+        nextcloud_config_marked_installed() { return 0; }
+        nextcloud_occ_status_value()
+        {
+            case "$1" in
+                installed) printf 'true\n' ;;
+                versionstring) printf '35.0.2\n' ;;
+                maintenance) printf 'false\n' ;;
+                needsDbUpgrade) printf 'false\n' ;;
+                *) return 1 ;;
+            esac
+        }
+        postgres_major_from_data_dir() { printf '18\n'; }
+        post_deploy_postgres_major() { printf '18\n'; }
+        post_deploy_health_status() { printf 'healthy\n'; }
+        env_get()
+        {
+            case "$1" in
+                NEXTCLOUD_TAG) printf '35.0.2-fpm\n' ;;
+                POSTGRES_IMAGE) printf '%s\n' "${pg_image}" ;;
+                POSTGRESQL_HOST_DIR) printf '%s\n' "${work}/postgresql-data/data" ;;
+                *) return 1 ;;
+            esac
+        }
+        state_write_installed() { printf '%s %s\n' "$1" "$2" > "${work}/wrote"; }
+        deploy_record_verified_install
+    ) >"${work}/record.out" 2>&1 || fail "A verified install was not recorded: $(cat "${work}/record.out")"
+    [[ "$(cat "${work}/wrote")" == "35.0.2-fpm 18" ]] \
+        || fail "Recorded evidence was $(cat "${work}/wrote" 2>/dev/null)."
+
+    rm -f "${work}/wrote"
+    status=0
+    (
+        deploy_state_file_value() { printf 'missing\n'; }
+        deploy_installed_code_version() { printf '35.0.2\n'; }
+        nextcloud_config_marked_installed() { return 0; }
+        nextcloud_occ_status_value()
+        {
+            case "$1" in
+                installed) printf 'true\n' ;;
+                versionstring) printf '35.0.2\n' ;;
+                maintenance) printf 'false\n' ;;
+                needsDbUpgrade) printf 'false\n' ;;
+                *) return 1 ;;
+            esac
+        }
+        postgres_major_from_data_dir() { printf '18\n'; }
+        post_deploy_postgres_major() { printf '18\n'; }
+        post_deploy_health_status() { printf 'unhealthy\n'; }
+        env_get()
+        {
+            case "$1" in
+                NEXTCLOUD_TAG) printf '35.0.2-fpm\n' ;;
+                POSTGRES_IMAGE) printf '%s\n' "${pg_image}" ;;
+                POSTGRESQL_HOST_DIR) printf '%s\n' "${work}/postgresql-data/data" ;;
+                *) return 1 ;;
+            esac
+        }
+        state_write_installed() { printf '%s %s\n' "$1" "$2" > "${work}/wrote"; }
+        deploy_record_verified_install
+    ) >"${work}/cron.out" 2>&1 || status=$?
+    [[ "${status}" -ne 0 ]] \
+        || fail "An unhealthy cron passed the evidence writer."
+    [[ ! -f "${work}/wrote" ]] \
+        || fail "An unhealthy cron wrote state."
+
+    rm -rf "${work}"
+
+    ok "Missing evidence is recorded only when the installation matches."
+}

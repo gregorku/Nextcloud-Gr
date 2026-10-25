@@ -860,6 +860,7 @@ deploy_compose()
 
     compose_up
     deploy_require_running_install
+    deploy_record_verified_install
 
     log_success "Nextcloud-Gr is installed and running."
 }

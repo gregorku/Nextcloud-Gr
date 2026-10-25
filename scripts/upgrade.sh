@@ -146,7 +146,7 @@ pinned="$(env_get NEXTCLOUD_TAG)"
     || fail "Target ${target} is not NEXTCLOUD_TAG ${pinned}. Update the Git pin and run update-env.sh first."
 
 [[ -f "${INSTALLED_VERSION_FILE}" ]] \
-    || fail "No installed version is recorded. Refusing to guess. Run ./scripts/record-installed.sh --confirm ${STACK_NAME} when the deployed version already matches NEXTCLOUD_TAG."
+    || fail "No installed version is recorded. Refusing to guess. When the deployed code already matches NEXTCLOUD_TAG, run ./scripts/deploy.sh. It records the evidence only after occ and PostgreSQL match."
 
 installed="$(tr -d '[:space:]' < "${INSTALLED_VERSION_FILE}")"
 

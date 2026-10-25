@@ -183,6 +183,22 @@ test_compose_bindings()
     if grep -q 'ps -o args=' "${root}/compose/50-cron.yml"; then
         fail "Cron healthcheck still calls ps, which the image does not provide."
     fi
+    local health_block
+    health_block="$(
+        awk '/^    healthcheck:/{p=1} p{print} p && /^      interval:/{exit}' \
+            "${root}/compose/50-cron.yml"
+    )"
+    if grep -q '\$' <<< "${health_block}"; then
+        fail "Cron healthcheck contains a dollar sign. Compose would interpolate it."
+    fi
+    grep -Fq "grep -F -v -q 'cron.sh'" "${root}/compose/50-cron.yml" \
+        || fail "Cron healthcheck accepts a shell that is still running cron.sh."
+    if ! cron_pid1_is_crond "$(printf 'busybox\0crond\0-f\0-L\0/dev/stdout\0' | tr '\0' ' ')"; then
+        fail "busybox crond was rejected as PID 1."
+    fi
+    if cron_pid1_is_crond "$(printf '/bin/sh\0/cron.sh\0' | tr '\0' ' ')"; then
+        fail "A shell running cron.sh was accepted as crond."
+    fi
     grep -Fq 'installed:[[:space:]]*true' \
         "${root}/compose/30-nextcloud-fpm.yml" \
         || fail "The application healthcheck treats open port 9000 as a finished install."

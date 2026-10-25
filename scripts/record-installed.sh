@@ -9,11 +9,11 @@
 #
 # Description:
 #   Record installed-version and postgres-major for an existing
-#   installation that already has config.php. deploy.sh does not do
-#   this. The command verifies the deployed image, the application
-#   version and the PostgreSQL major without reading the missing state
-#   file. It starts Compose only when version.php and PG_VERSION
-#   already match the pins.
+#   installation that already has config.php. deploy.sh does the same
+#   check and writes the files when the running installation matches.
+#   This command remains for an operator who wants that verification
+#   without the rest of deploy.sh. It starts Compose only when
+#   version.php and PG_VERSION already match the pins.
 #
 # Usage:
 #   ./scripts/record-installed.sh --confirm nextcloud-gr
@@ -53,8 +53,9 @@ Usage:
 Description:
 
     Use this when config.php exists and state/installed-version does
-    not. deploy.sh will not start that installation and will not invent
-    the state files.
+    not, and the rest of deploy.sh should not run. deploy.sh itself
+    records the same evidence when version.php, occ and PostgreSQL
+    already match the pins. Neither command invents a version.
 
     The command reads version.php and PG_VERSION without the missing
     state file. When the containers are already running, it compares

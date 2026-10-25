@@ -67,17 +67,22 @@ services:
       redis:
         condition: service_healthy
 
+    # Compose interpolates $name in this file before the container
+    # runs. $cmdline and $status were therefore empty: Compose warned
+    # that those variables were unset, grep read an empty string, and
+    # the container stayed unhealthy. This test has no shell variables.
     # /cron.sh does `exec busybox crond -f -L /dev/stdout`, so PID 1 is
     # crond, not the shell and not cron.sh. The image has no ps.
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          set -eu;
-          cmdline=$$(tr '\0' ' ' < /proc/1/cmdline) || exit 1;
-          printf '%s\n' "$$cmdline" | grep -F -q 'busybox crond' || exit 1;
-          status=$$(su -s /bin/bash www-data -c 'php /var/www/html/occ status') || exit 1;
-          printf '%s\n' "$$status" | grep -Eq 'installed:[[:space:]]*true'
+          tr '\0' ' ' < /proc/1/cmdline
+          | grep -F -q 'busybox crond'
+          && tr '\0' ' ' < /proc/1/cmdline
+          | grep -F -v -q 'cron.sh'
+          && su -s /bin/bash www-data -c 'php /var/www/html/occ status'
+          | grep -Eq 'installed:[[:space:]]*true'
 
       interval: 30s
 

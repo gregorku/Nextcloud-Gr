@@ -71,16 +71,12 @@ test_version_guard()
         || fail "A config.php without installed => true was ${message}."
 
     printf '%s\n' '<?php' "'installed' => true," > "${config}"
-    status=0
-    message="$(deploy_version_decision "${installed}" "${config}" "35.0.2-fpm")" || status=$?
-    [[ "${status}" -ne 0 ]] \
-        || fail "An installed config.php without a version file was allowed."
+    message="$(deploy_version_decision "${installed}" "${config}" "35.0.2-fpm")" \
+        || fail "An installed config.php without evidence was refused before verification: ${message}"
+    [[ "${message}" == "recover" ]] \
+        || fail "Missing installed-version decision was ${message}."
     [[ "${message}" != "first-install" && "${message}" != "unfinished" ]] \
         || fail "An installed config.php was treated as ${message}."
-    [[ "${message}" == *"record-installed.sh"* ]] \
-        || fail "The missing state file did not point at record-installed.sh: ${message}"
-    [[ "${message}" == *"not a first install"* ]] \
-        || fail "The missing state file was not described as an existing installation: ${message}"
 
     [[ "$(postgres_owner_action "" "nextcloud")" == "none" ]] \
         || fail "An empty database was not left alone."

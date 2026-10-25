@@ -138,6 +138,7 @@ run_static_tests()
     test_external_validators
     test_version_guard
     test_install_state
+    test_evidence_recovery
     test_php_matrix
     test_custom_app_compatibility
     test_upgrade_sequence

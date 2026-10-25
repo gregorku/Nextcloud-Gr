@@ -26,6 +26,9 @@ source "${SCRIPT_DIR}/lib/docker-compose.sh"
 source "${SCRIPT_DIR}/lib/checks/load.sh"
 source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
+source "${SCRIPT_DIR}/lib/deploy/state-file.sh"
+source "${SCRIPT_DIR}/lib/post-deploy/checks.sh"
 source "${SCRIPT_DIR}/lib/deploy/stack.sh"
 source "${SCRIPT_DIR}/lib/deploy/verify.sh"
 source "${SCRIPT_DIR}/lib/deploy/check-env.sh"
@@ -57,10 +60,14 @@ Description:
     installed => true is unfinished: deploy runs maintenance:install
     once and does not treat a healthy PHP-FPM port as success. An
     already installed instance is not installed again. config.php with
-    installed => true and no state file is not started. Use
-    ./scripts/record-installed.sh --confirm ${STACK_NAME} for that
-    case. Deploy does not delete PostgreSQL data or the Nextcloud
-    data directory. A test reset is ./scripts/reset-test.sh --confirm
+    installed => true and no installed-version is an existing
+    installation. Deploy does not treat it as a first install. It
+    continues only when version.php, the PostgreSQL cluster and, if
+    the stack is already running, occ all match the pins. It writes
+    the missing state files only after those checks and a healthy
+    cron. A mismatch stops deploy and does not rewrite evidence.
+    Deploy does not delete PostgreSQL data or the Nextcloud data
+    directory. A test reset is ./scripts/reset-test.sh --confirm
     ${STACK_NAME}.
 
     rsync --delete applies only to compose/ and configs/. It does not

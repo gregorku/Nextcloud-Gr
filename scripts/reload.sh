@@ -90,8 +90,8 @@ Description:
 
     deploy.sh refuses a NEXTCLOUD_TAG that differs from the installed
     version. A version change belongs to ./scripts/upgrade.sh. An
-    existing config.php without state/installed-version is not started
-    here either.
+    existing installation without installed-version is started only
+    when its code and PostgreSQL data already match the pins.
     Afterwards post-deploy.sh and test.sh run.
 
 EOF

@@ -92,9 +92,9 @@ Description:
     unchanged.
 
     This requires the containers to be running. When config.php exists
-    and the stack is stopped, run ./scripts/record-installed.sh
-    --confirm ${STACK_NAME} instead of starting a different version
-    with deploy.sh.
+    and installed-version does not, ./scripts/deploy.sh records the
+    evidence after occ and PostgreSQL match. It does not start a
+    different Nextcloud tag or PostgreSQL major.
 
 EOF
 }

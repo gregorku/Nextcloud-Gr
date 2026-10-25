@@ -6,7 +6,7 @@ https://github.com/nextcloud/docker#update-to-a-newer-version
 
 `deploy.sh` a `reload.sh` verzi Nextcloudu nemění. Když `state/installed-version` nesouhlasí s `NEXTCLOUD_TAG`, deploy skončí dřív, než stáhne image a než spustí kontejner. Entrypoint oficiálního image by jinak při startu `php-fpm` migraci provedl sám.
 
-Když `config.php` obsahuje `installed => true` a `installed-version` chybí, upgrade.sh verzi nehádá. Evidenci doplní `./scripts/record-installed.sh --confirm nextcloud-gr` až když nasazený obraz, kód na disku a PostgreSQL major souhlasí s pinem. Jinou verzi tím nespouští. `config.php` bez `installed => true` není dokončená instalace a upgrade ji nedoplní.
+Když `config.php` obsahuje `installed => true` a `installed-version` chybí, upgrade.sh verzi nehádá. `./scripts/deploy.sh` evidenci doplní jen když nasazený kód, `occ` a PostgreSQL major už souhlasí s pinem. Jinou verzi tím nespustí. `config.php` bez `installed => true` není dokončená instalace a upgrade ji nedoplní.
 
 ## Povolený krok
 

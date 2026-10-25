@@ -11,8 +11,10 @@
 #   Compare Nextcloud tags and PostgreSQL majors without Docker.
 #   deploy.sh uses this to refuse an unnoticed upgrade. upgrade.sh uses
 #   it to allow only the next major, or a newer release of the same
-#   major. record-installed.sh uses it to recover missing evidence
-#   without treating an existing install as a first installation.
+#   major. A missing installed-version on an existing installation is
+#   "recover": deploy may continue only when the code and PostgreSQL
+#   data already match, and it writes the state files only after occ
+#   agrees. It does not treat that installation as a first install.
 #
 ###############################################################################
 
@@ -88,8 +90,10 @@ postgres_image_major()
 #   $2 - config.php path
 #   $3 - intended tag
 #
-# Prints "unchanged" or "first-install" on success. On failure prints
-# the operator message and returns 1.
+# Prints "unchanged", "first-install", "unfinished" or "recover" on
+# success. "recover" means config.php is installed and the version
+# file is absent. It does not write state and it is not a first
+# install. On failure prints the operator message and returns 1.
 #
 ###############################################################################
 
@@ -129,10 +133,8 @@ deploy_version_decision()
 
     if [[ -f "${config_php}" ]]; then
         if nextcloud_config_marked_installed "${config_php}"; then
-            printf 'config.php exists but %s does not. This is an existing installation, not a first install. deploy.sh will not start Compose and will not write state files. If the stack is already running the pinned images, run ./scripts/post-deploy.sh. If it is not running, run ./scripts/record-installed.sh --confirm %s. That command reads the deployed code and PG_VERSION without this state file and starts the pinned images only when they already match that data.\n' \
-                "${installed_file}" \
-                "${STACK_NAME}"
-            return 1
+            printf 'recover\n'
+            return 0
         fi
 
         printf 'unfinished\n'
@@ -141,6 +143,383 @@ deploy_version_decision()
 
     printf 'first-install\n'
     return 0
+}
+
+###############################################################################
+# Read one state file without treating a missing file as empty.
+#
+# Arguments:
+#   $1 - path
+#
+# Prints missing, empty, or the file contents.
+#
+###############################################################################
+
+deploy_state_file_value()
+{
+    local file="$1"
+    local value
+
+    if [[ ! -f "${file}" ]]; then
+        printf 'missing\n'
+        return 0
+    fi
+
+    value="$(tr -d '[:space:]' < "${file}")"
+    if [[ -z "${value}" ]]; then
+        printf 'empty\n'
+        return 0
+    fi
+
+    printf '%s\n' "${value}"
+}
+
+###############################################################################
+# Major from `postgres -V`. The text is passed in so tests do not need
+# a server. Example: postgres (PostgreSQL) 18.6 (Debian ...)
+#
+# Arguments:
+#   $1 - version text
+#
+###############################################################################
+
+postgres_major_from_version_text()
+{
+    local text="$1"
+
+    [[ "${text}" =~ PostgreSQL\)[[:space:]]+([0-9]+) ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+###############################################################################
+# PID 1 of nextcloud:35.0.2-fpm cron is `busybox crond`, because
+# /cron.sh replaces itself with that exec. A shell still running
+# /cron.sh is not crond.
+#
+# Arguments:
+#   $1 - /proc/1/cmdline with NUL bytes already turned into spaces
+#
+###############################################################################
+
+cron_pid1_is_crond()
+{
+    local cmdline="$1"
+
+    [[ "${cmdline}" == *'busybox crond'* ]] || return 1
+    [[ "${cmdline}" != *cron.sh* ]] || return 1
+    [[ "${cmdline}" != */bin/sh* && "${cmdline}" != */bin/bash* ]] || return 1
+    return 0
+}
+
+###############################################################################
+# May deploy continue when installed-version is missing?
+#
+# This does not write state. Cron health is intentionally not an input:
+# an unhealthy cron must not block the Compose refresh that replaces
+# its healthcheck. The write below still requires cron to be healthy.
+#
+# Arguments:
+#   $1  - version.php OC_VersionString, or empty
+#   $2  - PG_VERSION major, or empty
+#   $3  - NEXTCLOUD_TAG
+#   $4  - POSTGRES_IMAGE
+#   $5  - running, partial, stopped or absent
+#   $6  - nextcloud container image, or empty
+#   $7  - postgres container image, or empty
+#   $8  - occ installed, or empty when occ failed
+#   $9  - occ versionstring, or empty
+#   $10 - occ maintenance, or empty
+#   $11 - occ needsDbUpgrade, or empty
+#   $12 - running PostgreSQL major, or empty
+#   $13 - expected nextcloud image reference
+#
+# Prints allow. On failure prints the operator message and returns 1.
+#
+###############################################################################
+
+deploy_missing_evidence_decision()
+{
+    local version_php="$1"
+    local pg_disk="$2"
+    local intended="$3"
+    local pg_image="$4"
+    local containers="$5"
+    local nextcloud_image="$6"
+    local postgres_image="$7"
+    local occ_installed="$8"
+    local occ_version="$9"
+    local occ_maintenance="${10}"
+    local occ_needs_db="${11}"
+    local live_pg="${12}"
+    local expected_image="${13}"
+    local expected
+    local image_major
+
+    [[ "$#" -eq 13 ]] || {
+        printf 'deploy_missing_evidence_decision expects 13 arguments.\n'
+        return 1
+    }
+
+    if ! expected="$(upgrade_release_number "${intended}")"; then
+        printf 'NEXTCLOUD_TAG %s is not an exact X.Y.Z-fpm release. State files were not written.\n' \
+            "${intended}"
+        return 1
+    fi
+
+    image_major="$(postgres_image_major "${pg_image}")" || {
+        printf 'POSTGRES_IMAGE %s is not an exact major.minor tag. State files were not written.\n' \
+            "${pg_image}"
+        return 1
+    }
+
+    if [[ -z "${version_php}" ]]; then
+        printf 'config.php is installed but version.php has no Nextcloud version. This is not a first install. State files were not written and Compose was not started.\n'
+        return 1
+    fi
+
+    if [[ "${version_php}" != "${expected}" ]]; then
+        printf 'Nextcloud code in version.php is %s and NEXTCLOUD_TAG is %s. Refusing to start a different version over existing data. Set NEXTCLOUD_TAG to %s-fpm and run ./scripts/update-env.sh before deploy.sh. State files were not written.\n' \
+            "${version_php}" \
+            "${intended}" \
+            "${version_php}"
+        return 1
+    fi
+
+    if [[ -z "${pg_disk}" ]]; then
+        printf 'config.php is installed but PG_VERSION was not found under the PostgreSQL data directory. That directory is POSTGRESQL_HOST_DIR, not /docker-data/nextcloud-gr. The cluster file is <major>/docker/PG_VERSION. Refusing to guess or initialize a database. State files were not written.\n'
+        return 1
+    fi
+
+    if [[ "${pg_disk}" != "${image_major}" ]]; then
+        printf 'PostgreSQL data directory is major %s and POSTGRES_IMAGE is major %s. Refusing to start a different major over existing data. State files were not written.\n' \
+            "${pg_disk}" \
+            "${image_major}"
+        return 1
+    fi
+
+    case "${containers}" in
+        partial)
+            printf 'Only some stack containers are running. Refusing to start or recreate the others over an existing installation. State files were not written.\n'
+            return 1
+            ;;
+        running)
+            if ! image_reference_matches "${nextcloud_image}" "${expected_image}"; then
+                printf 'The running Nextcloud image is %s. Expected %s. This deploy will not recreate it over existing data. State files were not written.\n' \
+                    "${nextcloud_image:-unknown}" \
+                    "${expected_image}"
+                return 1
+            fi
+
+            if ! image_reference_matches "${postgres_image}" "${pg_image}"; then
+                printf 'The running PostgreSQL image is %s. Expected %s. This deploy will not recreate it over existing data. State files were not written.\n' \
+                    "${postgres_image:-unknown}" \
+                    "${pg_image}"
+                return 1
+            fi
+
+            if [[ -z "${occ_installed}" ]]; then
+                printf 'occ status failed. config.php says installed, so this is not a first install and maintenance:install will not run. State files were not written.\n'
+                return 1
+            fi
+
+            if [[ "${occ_installed}" != "true" ]]; then
+                printf 'config.php is installed but occ reports installed: %s. Refusing to run maintenance:install and refusing to record state. Nothing was deleted.\n' \
+                    "${occ_installed}"
+                return 1
+            fi
+
+            if [[ "${occ_version}" != "${expected}" || "${version_php}" != "${occ_version}" ]]; then
+                printf 'occ versionstring is %s and version.php is %s. NEXTCLOUD_TAG is %s. Refusing to record a different version. State files were not written.\n' \
+                    "${occ_version:-unknown}" \
+                    "${version_php}" \
+                    "${intended}"
+                return 1
+            fi
+
+            if [[ "${occ_maintenance}" != "false" ]]; then
+                printf 'Nextcloud maintenance mode is %s. State files were not written.\n' \
+                    "${occ_maintenance:-unknown}"
+                return 1
+            fi
+
+            if [[ "${occ_needs_db}" != "false" ]]; then
+                printf 'Nextcloud still needs a database upgrade. deploy.sh will not record this as the current version and will not upgrade it. State files were not written.\n'
+                return 1
+            fi
+
+            if [[ -z "${live_pg}" || "${live_pg}" != "${image_major}" || "${live_pg}" != "${pg_disk}" ]]; then
+                printf 'Running PostgreSQL is major %s, the data directory is major %s, and POSTGRES_IMAGE is major %s. State files were not written.\n' \
+                    "${live_pg:-unknown}" \
+                    "${pg_disk}" \
+                    "${image_major}"
+                return 1
+            fi
+
+            printf 'allow\n'
+            return 0
+            ;;
+        stopped|absent)
+            if [[ -n "${nextcloud_image}" ]] && ! image_reference_matches "${nextcloud_image}" "${expected_image}"; then
+                printf 'Container %s exists with image %s, expected %s. This deploy will not recreate it. State files were not written.\n' \
+                    "${NEXTCLOUD_APP_CONTAINER}" \
+                    "${nextcloud_image}" \
+                    "${expected_image}"
+                return 1
+            fi
+
+            if [[ -n "${postgres_image}" ]] && ! image_reference_matches "${postgres_image}" "${pg_image}"; then
+                printf 'Container %s exists with image %s, expected %s. This deploy will not recreate it. State files were not written.\n' \
+                    "${POSTGRESQL_CONTAINER}" \
+                    "${postgres_image}" \
+                    "${pg_image}"
+                return 1
+            fi
+
+            printf 'allow\n'
+            return 0
+            ;;
+        *)
+            printf 'Unexpected container state: %s. State files were not written.\n' \
+                "${containers}"
+            return 1
+            ;;
+    esac
+}
+
+###############################################################################
+# Decide whether the verified running install may gain state files.
+# An existing different value is never replaced. Complete evidence is
+# left unchanged. Missing evidence is recorded only when every fact
+# matches, including a healthy cron.
+#
+# Arguments:
+#   $1  - yes when config.php has installed => true, otherwise no
+#   $2  - occ installed, or empty
+#   $3  - occ versionstring, or empty
+#   $4  - occ maintenance, or empty
+#   $5  - occ needsDbUpgrade, or empty
+#   $6  - version.php OC_VersionString, or empty
+#   $7  - running PostgreSQL major, or empty
+#   $8  - PG_VERSION major, or empty
+#   $9  - NEXTCLOUD_TAG
+#   $10 - POSTGRES_IMAGE
+#   $11 - cron health status, or empty
+#   $12 - installed-version contents, missing, or empty
+#   $13 - postgres-major contents, missing, or empty
+#
+# Prints record or unchanged.
+#
+###############################################################################
+
+deploy_evidence_write_decision()
+{
+    local config_installed="$1"
+    local occ_installed="$2"
+    local occ_version="$3"
+    local occ_maintenance="$4"
+    local occ_needs_db="$5"
+    local version_php="$6"
+    local live_pg="$7"
+    local pg_disk="$8"
+    local intended="$9"
+    local pg_image="${10}"
+    local cron_health="${11}"
+    local installed_state="${12}"
+    local postgres_state="${13}"
+    local expected
+    local image_major
+
+    [[ "$#" -eq 13 ]] || {
+        printf 'deploy_evidence_write_decision expects 13 arguments.\n'
+        return 1
+    }
+
+    if [[ "${installed_state}" == "empty" || "${postgres_state}" == "empty" ]]; then
+        printf 'A state file exists but is empty. Refusing to overwrite it. State files were not written.\n'
+        return 1
+    fi
+
+    if ! expected="$(upgrade_release_number "${intended}")"; then
+        printf 'NEXTCLOUD_TAG %s is not an exact X.Y.Z-fpm release. State files were not written.\n' \
+            "${intended}"
+        return 1
+    fi
+
+    image_major="$(postgres_image_major "${pg_image}")" || {
+        printf 'POSTGRES_IMAGE %s is not an exact major.minor tag. State files were not written.\n' \
+            "${pg_image}"
+        return 1
+    }
+
+    if [[ "${installed_state}" != "missing" && "${installed_state}" != "${intended}" ]]; then
+        printf 'Installed Nextcloud tag is %s and the verified tag is %s. Refusing to overwrite evidence. State files were not written.\n' \
+            "${installed_state}" \
+            "${intended}"
+        return 1
+    fi
+
+    if [[ "${postgres_state}" != "missing" && "${postgres_state}" != "${image_major}" ]]; then
+        printf 'Recorded PostgreSQL major is %s and the verified major is %s. Refusing to overwrite evidence. State files were not written.\n' \
+            "${postgres_state}" \
+            "${image_major}"
+        return 1
+    fi
+
+    if [[ "${config_installed}" != "yes" ]]; then
+        printf 'config.php is not a finished installation. State files were not written.\n'
+        return 1
+    fi
+
+    if [[ -z "${occ_installed}" ]]; then
+        printf 'occ status failed. State files were not written.\n'
+        return 1
+    fi
+
+    if [[ "${occ_installed}" != "true" ]]; then
+        printf 'occ reports installed: %s. State files were not written. Nothing was deleted.\n' \
+            "${occ_installed}"
+        return 1
+    fi
+
+    if [[ -z "${version_php}" || "${version_php}" != "${expected}" || "${occ_version}" != "${expected}" ]]; then
+        printf 'occ versionstring is %s and version.php is %s. NEXTCLOUD_TAG is %s. Refusing to record a different version. State files were not written.\n' \
+            "${occ_version:-unknown}" \
+            "${version_php:-unknown}" \
+            "${intended}"
+        return 1
+    fi
+
+    if [[ "${occ_maintenance}" != "false" ]]; then
+        printf 'Nextcloud maintenance mode is %s. State files were not written.\n' \
+            "${occ_maintenance:-unknown}"
+        return 1
+    fi
+
+    if [[ "${occ_needs_db}" != "false" ]]; then
+        printf 'Nextcloud still needs a database upgrade. State files were not written.\n'
+        return 1
+    fi
+
+    if [[ -z "${live_pg}" || -z "${pg_disk}" || "${live_pg}" != "${image_major}" || "${pg_disk}" != "${live_pg}" ]]; then
+        printf 'Running PostgreSQL is major %s, the data directory is major %s, and POSTGRES_IMAGE is major %s. State files were not written.\n' \
+            "${live_pg:-unknown}" \
+            "${pg_disk:-unknown}" \
+            "${image_major}"
+        return 1
+    fi
+
+    if [[ "${cron_health}" != "healthy" ]]; then
+        printf 'Cron health is %s. State files were not written.\n' \
+            "${cron_health:-unset}"
+        return 1
+    fi
+
+    if [[ "${installed_state}" != "missing" && "${postgres_state}" != "missing" ]]; then
+        printf 'unchanged\n'
+        return 0
+    fi
+
+    printf 'record\n'
 }
 
 ###############################################################################
