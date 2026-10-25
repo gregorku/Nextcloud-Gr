@@ -111,16 +111,20 @@ deploy_wait_postgres()
 
 ###############################################################################
 # Return the initdb superuser. PostgreSQL assigns that role OID 10 and
-# from version 16 refuses to clear its SUPERUSER attribute. Try the
-# application role first, then the bootstrap role. A failed login is
-# not an empty cluster.
+# from version 16 refuses to clear its SUPERUSER attribute.
+#
+# A new cluster has only nc_bootstrap, so the admin login is first.
+# Trying PG_USER before that role exists is recorded by PostgreSQL as
+# FATAL and is not used to decide that the cluster is empty. The
+# application login is only the fallback for a cluster whose OID 10
+# is still PG_USER and which therefore has no nc_bootstrap role yet.
 ###############################################################################
 
 deploy_read_bootstrap_name()
 {
     local name=""
 
-    if name="$(deploy_postgres_value postgres \
+    if name="$(deploy_postgres_admin_value postgres \
         "SELECT rolname FROM pg_roles WHERE oid = 10" 2>/dev/null)" \
         && [[ -n "${name}" ]]
     then
@@ -128,7 +132,7 @@ deploy_read_bootstrap_name()
         return 0
     fi
 
-    if name="$(deploy_postgres_admin_value postgres \
+    if name="$(deploy_postgres_value postgres \
         "SELECT rolname FROM pg_roles WHERE oid = 10")" \
         && [[ -n "${name}" ]]
     then
@@ -230,11 +234,13 @@ deploy_align_database_owner()
     elif [[ "${app_oid}" == "10" ]]; then
         fail "Refusing to change SUPERUSER on the initdb role ${db_user}. No data was deleted."
     else
+        # psql -tA separates the text columns with "|". PostgreSQL has
+        # no || operator for integers, so the attributes stay text.
         attributes="$(deploy_postgres_admin_value postgres \
-            "SELECT CASE WHEN rolsuper THEN 1 ELSE 0 END || CASE WHEN rolcanlogin THEN 1 ELSE 0 END || CASE WHEN rolcreatedb THEN 1 ELSE 0 END || CASE WHEN rolcreaterole THEN 1 ELSE 0 END FROM pg_roles WHERE oid = ${app_oid}")" \
+            "SELECT CASE WHEN rolsuper THEN 'yes' ELSE 'no' END, CASE WHEN rolcanlogin THEN 'yes' ELSE 'no' END, CASE WHEN rolcreatedb THEN 'yes' ELSE 'no' END, CASE WHEN rolcreaterole THEN 'yes' ELSE 'no' END FROM pg_roles WHERE oid = ${app_oid}")" \
             || fail "Could not read the attributes of ${db_user}. No data was deleted."
 
-        if [[ "${attributes}" != "0100" ]]; then
+        if [[ "${attributes}" != "no|yes|no|no" ]]; then
             info "Setting ${db_user} to LOGIN without SUPERUSER, CREATEDB or CREATEROLE."
         fi
 
@@ -292,7 +298,7 @@ deploy_align_database_owner()
         || fail "Could not move public relations to ${db_user}. No data was deleted."
 
     attributes="$(deploy_postgres_admin_value postgres \
-        "SELECT CASE WHEN rolsuper THEN 1 ELSE 0 END || CASE WHEN rolcanlogin THEN 1 ELSE 0 END FROM pg_roles WHERE rolname = '${db_user}' AND oid <> 10")" \
+        "SELECT CASE WHEN rolsuper THEN 'yes' ELSE 'no' END, CASE WHEN rolcanlogin THEN 'yes' ELSE 'no' END, CASE WHEN rolcreatedb THEN 'yes' ELSE 'no' END, CASE WHEN rolcreaterole THEN 'yes' ELSE 'no' END FROM pg_roles WHERE rolname = '${db_user}' AND oid <> 10")" \
         || fail "Could not verify ${db_user}. No data was deleted."
     database_owner="$(deploy_postgres_admin_value postgres \
         "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '${db_name}'")" \
@@ -301,7 +307,9 @@ deploy_align_database_owner()
         "SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'public'")" \
         || fail "Could not verify the owner of schema public. No data was deleted."
 
-    [[ "${attributes}" == "01" && "${database_owner}" == "${db_user}" \
+    [[ -n "${attributes}" ]] \
+        || fail "Role ${db_user} was not found after setup. No data was deleted."
+    [[ "${attributes}" == "no|yes|no|no" && "${database_owner}" == "${db_user}" \
         && "${schema_owner}" == "${db_user}" ]] \
         || fail "PostgreSQL role ${db_user} is not a LOGIN owner without SUPERUSER. No data was deleted."
 

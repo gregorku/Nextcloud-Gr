@@ -212,6 +212,20 @@ test_compose_bindings()
     grep -Fq 'oid = 10' \
         "${root}/scripts/lib/deploy/compose.sh" \
         || fail "Deploy does not identify the initdb superuser."
+    if grep -n 'END || CASE' "${root}/scripts/lib/deploy/compose.sh"; then
+        fail "Role attributes are concatenated with the integer || operator."
+    fi
+    grep -Fq "THEN 'yes' ELSE 'no' END, CASE WHEN rolcanlogin" \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Role attributes are not read as text."
+    awk '
+        /^deploy_read_bootstrap_name/ {inside=1}
+        inside && /deploy_postgres_admin_value postgres/ && !admin {admin=NR}
+        inside && /deploy_postgres_value postgres/ && !app {app=NR}
+        /^deploy_align_database_owner/ {exit}
+        END { if (!(admin && app && admin < app)) exit 1 }
+    ' "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Bootstrap role is not read before the application role."
     grep -Fq 'NOSUPERUSER NOCREATEDB NOCREATEROLE' \
         "${root}/scripts/lib/deploy/compose.sh" \
         || fail "Deploy does not create the application role without SUPERUSER."
