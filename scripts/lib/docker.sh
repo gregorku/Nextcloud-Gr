@@ -164,13 +164,14 @@ docker_volume_exists() {
 ###############################################################################
 # Run a PostgreSQL client inside the database container.
 #
-# initdb --username is PG_USER. The image does not create a database
-# role named postgres. The OS account in the container is still named
-# postgres, so a client that omits -U asks for a role that does not
-# exist. Clients connect over 127.0.0.1 as the requested role. The
-# password comes from PG_PASS through a mode 600 env file and is not an
-# argument of docker or psql. A failed connection returns the client
-# status. It is not an empty query result.
+# New clusters run initdb --username nc_bootstrap. The image does not
+# create a database role named postgres. The OS account in the
+# container is still named postgres, so a client that omits -U asks
+# for a role that does not exist. Clients connect over 127.0.0.1 as
+# the requested role. TCP to 127.0.0.1 uses the password from PG_PASS
+# through a mode 600 env file. The password is not an argument of
+# docker or psql. A failed connection returns the client status. It is
+# not an empty query result.
 #
 # Arguments:
 #   $1 - Database role.

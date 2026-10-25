@@ -13,10 +13,13 @@
 #   Checked on 2026-10-20 against Docker Hub and the official image
 #   notes. PGDATA is /var/lib/postgresql/18/docker. The volume is
 #   /var/lib/postgresql, not /var/lib/postgresql/data.
-#   The Debian image creates user postgres as uid 999.
-#   POSTGRES_USER is PG_USER and initdb makes that role a superuser.
-#   deploy.sh then moves SUPERUSER to nc_bootstrap and leaves PG_USER
-#   as the owner used by Nextcloud and cron.
+#   The Debian image creates the OS account postgres as uid 999.
+#   initdb --username is POSTGRES_USER. PostgreSQL 16 and newer keep
+#   SUPERUSER on that role (OID 10) permanently. It is therefore
+#   nc_bootstrap, not PG_USER. deploy.sh creates PG_USER without
+#   SUPERUSER and makes it the owner Nextcloud and cron log in as.
+#   An existing cluster whose OID 10 is still PG_USER is renamed to
+#   nc_bootstrap; the attribute is not removed.
 #
 ###############################################################################
 
@@ -38,7 +41,7 @@ services:
     environment:
 
       POSTGRES_DB: ${PG_DB}
-      POSTGRES_USER: ${PG_USER}
+      POSTGRES_USER: nc_bootstrap
       POSTGRES_PASSWORD: ${PG_PASS}
       PGDATA: /var/lib/postgresql/18/docker
       POSTGRES_INITDB_ARGS: --data-checksums
@@ -51,7 +54,7 @@ services:
 
       test:
         - CMD-SHELL
-        - pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}
+        - pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER} || pg_isready -d $${POSTGRES_DB}
 
       interval: 30s
 

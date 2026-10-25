@@ -197,9 +197,24 @@ test_compose_bindings()
     grep -Fq 'NC_setup_create_db_user: "false"' \
         "${root}/compose/50-cron.yml" \
         || fail "Cron does not use the same database-role policy as the application."
+    grep -Fq 'POSTGRES_USER: nc_bootstrap' \
+        "${root}/compose/10-postgresql.yml" \
+        || fail "initdb still uses the application role as its permanent superuser."
+    grep -Fq 'POSTGRES_BOOTSTRAP_USER="nc_bootstrap"' \
+        "${root}/scripts/config.sh" \
+        || fail "The bootstrap role name is not nc_bootstrap."
+    grep -Fq 'POSTGRES_USER: ${PG_USER}' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "Nextcloud does not log in as PG_USER."
+    grep -Fq 'POSTGRES_USER: ${PG_USER}' \
+        "${root}/compose/50-cron.yml" \
+        || fail "Cron does not log in as PG_USER."
+    grep -Fq 'oid = 10' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy does not identify the initdb superuser."
     grep -Fq 'NOSUPERUSER NOCREATEDB NOCREATEROLE' \
         "${root}/scripts/lib/deploy/compose.sh" \
-        || fail "Deploy does not remove SUPERUSER from the application role."
+        || fail "Deploy does not create the application role without SUPERUSER."
     if grep -E 'ROLE \$\{user_ident\}' "${root}/scripts/lib/deploy/compose.sh" \
         | grep -E 'LOGIN SUPERUSER|WITH SUPERUSER'
     then

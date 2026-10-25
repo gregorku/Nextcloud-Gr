@@ -159,10 +159,9 @@ readonly POSTGRES_MAJOR="18"
 readonly NEXTCLOUD_UID_GID="33:33"
 readonly POSTGRESQL_UID_GID="999:999"
 
-# initdb makes PG_USER a superuser. Nextcloud then creates oc_admin and
-# the installation loses access to tables owned by the other role.
-# This role keeps SUPERUSER so PG_USER can be the application owner
-# without it. Its password is PG_PASS. It is not a new .env value.
+# OID 10 is the initdb superuser. PostgreSQL 18 refuses to remove its
+# SUPERUSER attribute. PG_USER must be a different role. The password
+# is PG_PASS. This is not a new .env value.
 readonly POSTGRES_BOOTSTRAP_USER="nc_bootstrap"
 
 ###############################################################################
