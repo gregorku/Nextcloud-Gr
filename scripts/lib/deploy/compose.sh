@@ -328,9 +328,130 @@ deploy_align_database_owner()
 }
 
 ###############################################################################
+# Path the installer treats as the admin home. occ maintenance:install
+# refuses to create that user when the path already exists and reports
+# "Login is invalid because files already exist for this user".
+#
+# Arguments:
+#   $1 - Host data directory mounted at /var/www/html/data
+#   $2 - NEXTCLOUD_ADMIN_USER
+#
+# Prints the path when it exists. Returns 1 when the install can create
+# the user. Returns 2 when the username is not a single path component.
+###############################################################################
+
+deploy_existing_admin_home()
+{
+    local data_dir="$1"
+    local admin_user="$2"
+    local home
+
+    [[ "${admin_user}" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || return 2
+    [[ "${admin_user}" != "." && "${admin_user}" != ".." ]] || return 2
+
+    home="${data_dir%/}/${admin_user}"
+    if [[ -e "${home}" || -L "${home}" ]]; then
+        printf '%s\n' "${home}"
+        return 0
+    fi
+
+    return 1
+}
+
+###############################################################################
+# An unfinished install must not already contain the admin account.
+# createUser() fails for an existing home directory and for an existing
+# uid, and the image entrypoint prints the files message for both.
+# Returns 0 and prints the table name when the uid is present.
+# Returns 1 when the account tables are absent or do not contain it.
+# Returns 2 when the catalog cannot be read.
+###############################################################################
+
+deploy_database_has_admin_uid()
+{
+    local database="$1"
+    local admin_user="$2"
+    local uid_literal
+    local table
+    local present
+    local row
+
+    uid_literal="$(deploy_sql_literal "${admin_user}")" || return 2
+
+    for table in oc_accounts oc_users
+    do
+        present="$(deploy_postgres_value "${database}" \
+            "SELECT COALESCE(to_regclass('public.${table}')::text, '')")" || return 2
+        [[ -n "${present}" ]] || continue
+
+        row="$(deploy_postgres_value "${database}" \
+            "SELECT 1 FROM ${table} WHERE uid = ${uid_literal} LIMIT 1")" || return 2
+        if [[ "${row}" == "1" ]]; then
+            printf '%s\n' "${table}"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+deploy_assert_new_install_can_create_admin()
+{
+    local data_dir
+    local html_dir
+    local admin_user
+    local db_name
+    local home=""
+    local table=""
+    local status=0
+    local conflict=""
+
+    if nextcloud_config_marked_installed \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php"
+    then
+        return 0
+    fi
+
+    data_dir="$(env_get NEXTCLOUD_DATA_HOST_DIR)"
+    html_dir="$(env_get NEXTCLOUD_HTML_HOST_DIR)"
+    admin_user="$(env_get NEXTCLOUD_ADMIN_USER)"
+    db_name="$(env_get PG_DB)"
+
+    if [[ -d "${data_dir}" && -d "${html_dir}" \
+        && "$(realpath "${data_dir}")" == "$(realpath "${html_dir}")" ]]
+    then
+        compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
+        fail "NEXTCLOUD_DATA_HOST_DIR and the HTML directory are the same path. The data mount would hide /var/www/html/data with the code tree. Nothing was deleted."
+    fi
+
+    if home="$(deploy_existing_admin_home "${data_dir}" "${admin_user}")"; then
+        conflict="admin home ${home}"
+    else
+        status=$?
+        [[ "${status}" -eq 1 ]] \
+            || fail "NEXTCLOUD_ADMIN_USER cannot be used as a data directory name. Nothing was deleted."
+    fi
+
+    status=0
+    if table="$(deploy_database_has_admin_uid "${db_name}" "${admin_user}")"; then
+        conflict="${conflict:+${conflict}; }uid ${admin_user} in ${table}"
+    else
+        status=$?
+        [[ "${status}" -eq 1 ]] \
+            || fail "Could not check whether ${admin_user} already exists in PostgreSQL. Nextcloud was not started. No data was deleted."
+    fi
+
+    if [[ -n "${conflict}" ]]; then
+        compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
+        fail "Nextcloud is not installed, but the installer cannot create ${admin_user}: ${conflict}. occ reports that as \"Login is invalid because files already exist for this user\" and retries. Remove only that leftover admin home from a failed install, then run deploy again. Nothing was deleted."
+    fi
+}
+
+###############################################################################
 # The image entrypoint retries maintenance:install after a database
 # error. A permission failure is not an unfinished wait: stop the
 # application container so it does not create another oc_* role.
+# The same stop applies when the admin home or account already exists.
 # Health staying "starting" during start_period is not success.
 ###############################################################################
 
@@ -363,6 +484,11 @@ deploy_wait_nextcloud_install()
             fail "Nextcloud installation failed. It was not recorded as installed. No data was deleted."
         fi
 
+        if printf '%s\n' "${logs}" | grep -q 'Login is invalid because files already exist for this user'; then
+            compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
+            fail "Nextcloud installation found an existing admin home or account for $(env_get NEXTCLOUD_ADMIN_USER) under $(env_get NEXTCLOUD_DATA_HOST_DIR). The container was stopped. Nothing was deleted."
+        fi
+
         status="$(
             docker inspect \
                 --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
@@ -390,6 +516,7 @@ deploy_compose()
     compose_up "${POSTGRESQL_SERVICE}"
     deploy_wait_postgres
     deploy_align_database_owner
+    deploy_assert_new_install_can_create_admin
 
     log_info "Starting the remaining services."
 

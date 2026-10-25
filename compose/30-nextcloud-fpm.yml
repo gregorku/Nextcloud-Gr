@@ -68,6 +68,9 @@ services:
       MAIL_DOMAIN: ${MAIL_DOMAIN}
 
     volumes:
+      # Code, config, custom_apps and themes live in the HTML directory.
+      # The second mount replaces only /var/www/html/data. It is a
+      # different host directory, not a second copy of config.
       - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html
       - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data
       - ../configs/nextcloud/hooks/10-apcu.sh:/docker-entrypoint-hooks.d/post-installation/10-apcu.sh:ro

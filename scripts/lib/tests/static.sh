@@ -218,6 +218,24 @@ test_compose_bindings()
     grep -Fq "THEN 'yes' ELSE 'no' END, CASE WHEN rolcanlogin" \
         "${root}/scripts/lib/deploy/compose.sh" \
         || fail "Role attributes are not read as text."
+    grep -Fq 'Login is invalid because files already exist for this user' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy does not stop when the admin home already exists."
+
+    local admin_home
+    local work
+    work="$(mktemp -d)"
+    # shellcheck disable=SC1091
+    source "${root}/scripts/lib/deploy/compose.sh"
+    if admin_home="$(deploy_existing_admin_home "${work}" ncadmin)"; then
+        fail "An empty data directory was treated as an existing admin home: ${admin_home}"
+    fi
+    mkdir -p "${work}/ncadmin/files"
+    admin_home="$(deploy_existing_admin_home "${work}" ncadmin)" \
+        || fail "An existing admin home was ignored."
+    [[ "${admin_home}" == "${work}/ncadmin" ]] \
+        || fail "The conflicting admin home was ${admin_home}, not ${work}/ncadmin."
+    rm -rf "${work}"
     awk '
         /^deploy_read_bootstrap_name/ {inside=1}
         inside && /deploy_postgres_admin_value postgres/ && !admin {admin=NR}
