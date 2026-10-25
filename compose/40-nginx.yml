@@ -28,7 +28,7 @@ services:
       - "${NEXTCLOUD_BACKEND_BIND}:${NEXTCLOUD_BACKEND_PORT}:80"
 
     volumes:
-      - ../configs/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../configs/nginx/nginx.conf:/etc/nginx/conf.d/nextcloud.conf:ro
       - ../runtime/real-ip.conf:/etc/nginx/real-ip.conf:ro
       - ${NEXTCLOUD_HTML_HOST_DIR}:/var/www/html:ro
       - ${NEXTCLOUD_DATA_HOST_DIR}:/var/www/html/data:ro
