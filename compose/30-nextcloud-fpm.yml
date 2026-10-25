@@ -21,6 +21,13 @@
 #   Otherwise a superuser login makes Nextcloud create oc_admin, and
 #   that role cannot read tables owned by the original account.
 #
+#   Admin credentials are not passed into this container. The image
+#   entrypoint would run maintenance:install up to ten times, and it
+#   decides "new instance" from version.php (the code copy), not from
+#   config.php installed => true. After one failed start it therefore
+#   starts php-fpm and never installs again. deploy.sh runs
+#   maintenance:install once when the instance is not installed.
+#
 ###############################################################################
 
 services:
@@ -44,8 +51,6 @@ services:
       POSTGRES_USER: ${PG_USER}
       POSTGRES_PASSWORD: ${PG_PASS}
       NC_setup_create_db_user: "false"
-      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER}
-      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
       NEXTCLOUD_DATA_DIR: /var/www/html/data
       NEXTCLOUD_TRUSTED_DOMAINS: ${NEXTCLOUD_TRUSTED_DOMAINS}
       REDIS_HOST: redis

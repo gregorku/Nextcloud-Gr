@@ -45,6 +45,27 @@ Na tomto checkoutu ty mounty nejsou. Jejich filesystém, vlastníka a test zápi
 
 Čistá instalace nemá `config.php` ani `state/installed-version`. Tu `deploy.sh` spustí. `config.php` bez `installed => true` je nedokončená instalace: stejné obrazy se smí spustit, ale stavové soubory vzniknou až když `post-deploy.sh` uvidí nainstalovaný Nextcloud. `config.php` s `installed => true` a bez evidence verze deploy nespustí. `./scripts/record-installed.sh --confirm nextcloud-gr` tehdy přečte `version.php` a `PG_VERSION`. Obraz PostgreSQL 18 při `initdb` vytvoří superuživatele `nc_bootstrap` (OID 10). Tomu PostgreSQL nedovolí odebrat `SUPERUSER`. Před startem aplikace deploy založí `PG_USER` jako `LOGIN` bez `SUPERUSER` a předá mu databázi, schéma `public` a existující objekty `oc_*`. Když starší datový adresář ještě má jako OID 10 roli `PG_USER`, deploy ji přejmenuje na `nc_bootstrap` a aplikační roli založí znovu. Nextcloud i cron mají `NC_setup_create_db_user=false` a přihlašují se jako `PG_USER`. Deploy nemění heslo v logu a nemaže datové adresáře.
 
+`maintenance:install` zapíše `installed => true` až po vytvoření administrátora. Nextcloud 35 odmítne `createUser`, když v `datadirectory` už leží adresář se stejným jménem (`/var/www/html/data/ncadmin`, na hostiteli `NEXTCLOUD_DATA_HOST_DIR/ncadmin`). Hláška occ je `Login is invalid because files already exist for this user`. Nová databáze ten adresář nesmaže, protože leží na jiném svazku. Entrypoint obrazu navíc pozná „novou instanci“ podle `version.php` v HTML stromu, ne podle `installed`. Po prvním startu už instalaci nespustí a PHP-FPM může být healthy, i když Nextcloud nainstalovaný není. Deploy proto administrátorské heslo do kontejneru nedává a `maintenance:install` spustí sám, jednou. Úspěch vyžaduje `occ status` s `installed: true`, stejný příznak v `config.php`, `datadirectory` `/var/www/html/data`, účet v PostgreSQL, zdravý cron a `status.php` s `"installed":true`.
+
+Když instance nainstalovaná není a PostgreSQL účet administrátora nemá, deploy nejdřív přejmenuje jen jeho adresář na `.incomplete-<uživatel>-<čas>` ve stejném datadiru. Soubory zůstanou. Když účet v databázi je a Nextcloud přesto není nainstalovaný, deploy nic nemaže a skončí. Hotovou instanci při dalším deploy znovu neinstaluje.
+
+## Reset testovací instance
+
+Není součástí `deploy.sh`. Nesahá na `.env`, síť Dockeru, Dockge ani na `/docker-data/backups/nextcloud-gr`. Redis nemá datový svazek; zůstane `runtime/redis.conf`. Před smazáním ověří, že každý adresář existuje, není to mountpoint a že běžící nebo zastavený kontejner má na tomto místě stejný mount.
+
+```bash
+./scripts/reset-test.sh --confirm nextcloud-gr
+./scripts/deploy.sh
+./scripts/post-deploy.sh
+```
+
+Reset vyprázdní jen obsah těchto adresářů, ne jejich rodiče:
+
+- `NEXTCLOUD_HTML_HOST_DIR` (`/docker-data/nextcloud-gr/html`) — kód a `config.php`
+- `/docker-data/nextcloud-gr/state` — evidence nainstalované verze
+- `NEXTCLOUD_DATA_HOST_DIR` (`/nextcloud-data/test`) — datadir včetně `ncadmin`
+- `POSTGRESQL_HOST_DIR` (`/postgresql-data/data`) — cluster PostgreSQL této instance
+
 ## Běžný deploy
 
 `deploy.sh` smí běžet opakovaně pro změnu Nginx konfigurace, limitů a ostatních framework hodnot. Když se v Gitu změní `NEXTCLOUD_TAG`, `update-env.sh` ho přenese do `.env` a `deploy.sh` skončí chybou s odkazem na `upgrade.sh`. Samotný deploy tedy databázovou migraci nespustí.

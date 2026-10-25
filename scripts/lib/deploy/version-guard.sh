@@ -40,7 +40,7 @@ deploy_assert_same_version()
             info "No installed version and no config.php. This is a first installation."
             ;;
         unfinished)
-            info "config.php has no installed flag. The pinned images may start. Deploy does not reinstall Nextcloud and does not delete data directories."
+            info "config.php has no installed flag. Deploy installs Nextcloud once and does not delete data directories."
             ;;
         *)
             fail "Unexpected version decision: ${result}"

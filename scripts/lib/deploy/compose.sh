@@ -328,9 +328,14 @@ deploy_align_database_owner()
 }
 
 ###############################################################################
-# Path the installer treats as the admin home. occ maintenance:install
-# refuses to create that user when the path already exists and reports
-# "Login is invalid because files already exist for this user".
+# Path the installer treats as the admin home.
+#
+# Nextcloud 35 User\Manager::validateUserId($uid, true) rejects the
+# login when file_exists(datadirectory/uid). maintenance:install reports
+# that as "Login is invalid because files already exist for this user".
+# The directory is created while createUser runs, and installed => true
+# is written only after the later steps. A new PostgreSQL cluster does
+# not remove this directory: it lives on NEXTCLOUD_DATA_HOST_DIR.
 #
 # Arguments:
 #   $1 - Host data directory mounted at /var/www/html/data
@@ -356,6 +361,76 @@ deploy_existing_admin_home()
     fi
 
     return 1
+}
+
+###############################################################################
+# installed / home / uid -> what deploy may do.
+# installed: do not install and do not move the real admin home.
+# install: first install, maintenance:install once.
+# preserve-then-install: the home is not a database account. Rename it
+# out of the uid path and keep the files, then install once.
+# blocked: the account already exists but Nextcloud is not installed.
+# maintenance:install cannot create it again. Nothing is deleted.
+#
+# Arguments:
+#   $1 - true or false, from config.php installed => true
+#   $2 - present or absent
+#   $3 - present or absent
+###############################################################################
+
+deploy_install_action()
+{
+    local installed="$1"
+    local home="$2"
+    local uid="$3"
+
+    case "${installed}:${home}:${uid}" in
+        true:*)
+            printf 'installed\n'
+            ;;
+        false:absent:absent)
+            printf 'install\n'
+            ;;
+        false:present:absent)
+            printf 'preserve-then-install\n'
+            ;;
+        false:absent:present|false:present:present)
+            printf 'blocked\n'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+###############################################################################
+# Move an unfinished admin home aside. The bytes stay in the data
+# directory under a name that is not the uid. Returns 1 when the home
+# is absent. Returns 2 when the username is illegal or the destination
+# already exists. Prints the destination on success.
+###############################################################################
+
+deploy_preserve_orphan_admin_home()
+{
+    local data_dir="$1"
+    local admin_user="$2"
+    local home
+    local dest
+    local status=0
+
+    if ! home="$(deploy_existing_admin_home "${data_dir}" "${admin_user}")"; then
+        status=$?
+        return "${status}"
+    fi
+
+    dest="${data_dir%/}/.incomplete-${admin_user}-$(date +%Y%m%d%H%M%S)"
+    if [[ -e "${dest}" || -L "${dest}" ]]; then
+        printf '%s\n' "${dest}"
+        return 2
+    fi
+
+    mv -- "${home}" "${dest}" || return 2
+    printf '%s\n' "${dest}"
 }
 
 ###############################################################################
@@ -395,22 +470,35 @@ deploy_database_has_admin_uid()
     return 1
 }
 
-deploy_assert_new_install_can_create_admin()
+###############################################################################
+# Stop a previous application process before an unfinished install.
+# restart: unless-stopped does not restart a container stopped here.
+# PostgreSQL stays up. Nothing is deleted.
+###############################################################################
+
+deploy_stop_application()
+{
+    compose_cmd stop \
+        "${NEXTCLOUD_SERVICE}" \
+        "${CRON_SERVICE}" \
+        "${NGINX_SERVICE}" \
+        >/dev/null 2>&1 || true
+}
+
+deploy_prepare_unfinished_install()
 {
     local data_dir
     local html_dir
     local admin_user
     local db_name
+    local installed="false"
+    local home_state="absent"
+    local uid_state="absent"
     local home=""
     local table=""
+    local action
+    local preserved
     local status=0
-    local conflict=""
-
-    if nextcloud_config_marked_installed \
-        "${NEXTCLOUD_HTML_DIR}/config/config.php"
-    then
-        return 0
-    fi
 
     data_dir="$(env_get NEXTCLOUD_DATA_HOST_DIR)"
     html_dir="$(env_get NEXTCLOUD_HTML_HOST_DIR)"
@@ -420,87 +508,266 @@ deploy_assert_new_install_can_create_admin()
     if [[ -d "${data_dir}" && -d "${html_dir}" \
         && "$(realpath "${data_dir}")" == "$(realpath "${html_dir}")" ]]
     then
-        compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
+        deploy_stop_application
         fail "NEXTCLOUD_DATA_HOST_DIR and the HTML directory are the same path. The data mount would hide /var/www/html/data with the code tree. Nothing was deleted."
     fi
 
+    if nextcloud_config_marked_installed \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php"
+    then
+        installed="true"
+    fi
+
     if home="$(deploy_existing_admin_home "${data_dir}" "${admin_user}")"; then
-        conflict="admin home ${home}"
+        home_state="present"
     else
         status=$?
         [[ "${status}" -eq 1 ]] \
             || fail "NEXTCLOUD_ADMIN_USER cannot be used as a data directory name. Nothing was deleted."
     fi
 
+    if [[ "${installed}" == "true" ]]; then
+        info "Nextcloud is already installed. The admin home is left in place."
+        return 0
+    fi
+
     status=0
     if table="$(deploy_database_has_admin_uid "${db_name}" "${admin_user}")"; then
-        conflict="${conflict:+${conflict}; }uid ${admin_user} in ${table}"
+        uid_state="present"
     else
         status=$?
         [[ "${status}" -eq 1 ]] \
             || fail "Could not check whether ${admin_user} already exists in PostgreSQL. Nextcloud was not started. No data was deleted."
     fi
 
-    if [[ -n "${conflict}" ]]; then
-        compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
-        fail "Nextcloud is not installed, but the installer cannot create ${admin_user}: ${conflict}. occ reports that as \"Login is invalid because files already exist for this user\" and retries. Remove only that leftover admin home from a failed install, then run deploy again. Nothing was deleted."
-    fi
+    action="$(deploy_install_action "${installed}" "${home_state}" "${uid_state}")" \
+        || fail "Install state could not be classified. Nothing was deleted."
+
+    case "${action}" in
+        install)
+            info "Nextcloud is not installed. maintenance:install will run once."
+            deploy_stop_application
+            ;;
+        preserve-then-install)
+            deploy_stop_application
+            if ! preserved="$(deploy_preserve_orphan_admin_home "${data_dir}" "${admin_user}")"; then
+                fail "Could not preserve ${home}. Nothing was deleted."
+            fi
+            info "Preserved unfinished admin home ${home} as ${preserved}. PostgreSQL has no ${admin_user} account, so the directory is not a user. Nextcloud refuses createUser while datadirectory/${admin_user} exists. The files were renamed, not deleted."
+            ;;
+        blocked)
+            deploy_stop_application
+            fail "Nextcloud is not installed, but ${admin_user} is already in ${table}${home:+ (${home})}. maintenance:install cannot create that account again and this deploy does not delete it. For this test instance run ./scripts/reset-test.sh --confirm ${STACK_NAME}. Nothing was deleted."
+            ;;
+        *)
+            fail "Unexpected install action ${action}. Nothing was deleted."
+            ;;
+    esac
 }
 
 ###############################################################################
-# The image entrypoint retries maintenance:install after a database
-# error. A permission failure is not an unfinished wait: stop the
-# application container so it does not create another oc_* role.
-# The same stop applies when the admin home or account already exists.
-# Health staying "starting" during start_period is not success.
+# One maintenance:install. The image entrypoint must not do this: its
+# ten retries turn the admin home created by the first attempt into
+# "Login is invalid because files already exist for this user", and the
+# next container start sees version.php and skips installation.
 ###############################################################################
 
-deploy_wait_nextcloud_install()
+deploy_run_maintenance_install()
+{
+    local secret
+    local log
+    local status=0
+
+    secret="$(mktemp)"
+    log="$(mktemp)"
+    chmod 600 "${secret}" "${log}"
+
+    printf 'NEXTCLOUD_ADMIN_USER=%s\nNEXTCLOUD_ADMIN_PASSWORD=%s\n' \
+        "$(env_get NEXTCLOUD_ADMIN_USER)" \
+        "$(env_get NEXTCLOUD_ADMIN_PASSWORD)" \
+        > "${secret}"
+
+    if ! docker exec -u www-data --env-file "${secret}" \
+        "${NEXTCLOUD_APP_CONTAINER}" \
+        bash -c 'php /var/www/html/occ maintenance:install -n --admin-user "$NEXTCLOUD_ADMIN_USER" --admin-pass "$NEXTCLOUD_ADMIN_PASSWORD" --data-dir /var/www/html/data --database pgsql --database-name "$POSTGRES_DB" --database-user "$POSTGRES_USER" --database-pass "$POSTGRES_PASSWORD" --database-host "$POSTGRES_HOST"' \
+        > "${log}" 2>&1
+    then
+        status=1
+    fi
+
+    rm -f "${secret}"
+
+    if [[ "${status}" -ne 0 ]]; then
+        cat "${log}"
+        rm -f "${log}"
+        deploy_stop_application
+        fail "maintenance:install failed. Nextcloud was not recorded as installed. Nothing was deleted."
+    fi
+
+    rm -f "${log}"
+}
+
+deploy_set_trusted_domains()
+{
+    local domains
+    local domain
+    local index=1
+
+    domains="$(env_get NEXTCLOUD_TRUSTED_DOMAINS)"
+    [[ -n "${domains}" ]] \
+        || fail "NEXTCLOUD_TRUSTED_DOMAINS is empty. Installation was not recorded."
+
+    set -f
+    # Domains are separated by spaces. Globbing is off for this loop.
+    # shellcheck disable=SC2086
+    for domain in ${domains}
+    do
+        [[ "${domain}" =~ ^[A-Za-z0-9.-]{1,253}$ ]] \
+            || fail "NEXTCLOUD_TRUSTED_DOMAINS contains ${domain}. Installation was not recorded."
+        nextcloud_occ config:system:set trusted_domains "${index}" --value="${domain}" \
+            >/dev/null \
+            || fail "Could not set trusted domain ${domain}. Installation was not recorded."
+        index=$((index + 1))
+    done
+    set +f
+}
+
+deploy_install_nextcloud_if_needed()
 {
     local attempt=0
-    local status=""
-    local started=""
-    local logs=""
+    local installed=""
 
     while [[ "${attempt}" -lt 150 ]]
     do
-        started="$(
-            docker inspect \
-                --format '{{.State.StartedAt}}' \
-                "${NEXTCLOUD_APP_CONTAINER}" 2>/dev/null || true
-        )"
-        logs="$(
-            docker logs --since "${started:-0s}" \
-                "${NEXTCLOUD_APP_CONTAINER}" 2>&1 || true
-        )"
-
-        if printf '%s\n' "${logs}" | grep -q 'permission denied for table oc_migrations'; then
-            compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
-            fail "Nextcloud was denied access to oc_migrations. Installation stopped. No data was deleted."
+        if installed="$(nextcloud_occ_status_value installed 2>/dev/null)" \
+            && [[ -n "${installed}" ]]
+        then
+            break
         fi
-
-        if printf '%s\n' "${logs}" | grep -q 'Installing of nextcloud failed'; then
-            compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
-            fail "Nextcloud installation failed. It was not recorded as installed. No data was deleted."
-        fi
-
-        if printf '%s\n' "${logs}" | grep -q 'Login is invalid because files already exist for this user'; then
-            compose_cmd stop "${NEXTCLOUD_SERVICE}" >/dev/null 2>&1 || true
-            fail "Nextcloud installation found an existing admin home or account for $(env_get NEXTCLOUD_ADMIN_USER) under $(env_get NEXTCLOUD_DATA_HOST_DIR). The container was stopped. Nothing was deleted."
-        fi
-
-        status="$(
-            docker inspect \
-                --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-                "${NEXTCLOUD_APP_CONTAINER}" 2>/dev/null || true
-        )"
-        [[ "${status}" == "healthy" ]] && return 0
-
         attempt=$((attempt + 1))
         sleep 2
     done
 
-    fail "Nextcloud did not become healthy after installation. State was not recorded and no data was deleted."
+    [[ -n "${installed}" ]] \
+        || fail "occ status did not report installed. Nextcloud was not recorded as installed. No data was deleted."
+
+    if [[ "${installed}" == "true" ]]; then
+        if ! nextcloud_config_marked_installed \
+            "${NEXTCLOUD_HTML_DIR}/config/config.php"
+        then
+            fail "occ reports installed but config.php has no installed flag. Refusing to run maintenance:install. Nothing was deleted."
+        fi
+        info "Nextcloud is already installed. maintenance:install was not run."
+        return 0
+    fi
+
+    if nextcloud_config_marked_installed \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php"
+    then
+        fail "config.php is installed but occ reports installed: ${installed}. Refusing to run maintenance:install. Nothing was deleted."
+    fi
+
+    info "Running maintenance:install once."
+    deploy_run_maintenance_install
+    deploy_set_trusted_domains
+    docker exec "${NEXTCLOUD_APP_CONTAINER}" \
+        /docker-entrypoint-hooks.d/post-installation/10-apcu.sh \
+        || fail "The APCu hook failed after installation. State was not recorded. No data was deleted."
+}
+
+###############################################################################
+# Port 9000 and HTTP 200 are not an installation. occ, config.php,
+# the admin account and cron must agree before deploy succeeds.
+###############################################################################
+
+deploy_require_running_install()
+{
+    local attempt=0
+    local installed=""
+    local versionstring=""
+    local expected
+    local data_dir
+    local admin_user
+    local table=""
+    local cron_health=""
+    local body
+
+    data_dir="$(env_get NEXTCLOUD_DATA_HOST_DIR)"
+    admin_user="$(env_get NEXTCLOUD_ADMIN_USER)"
+    expected="$(upgrade_release_number "$(env_get NEXTCLOUD_TAG)")" \
+        || fail "NEXTCLOUD_TAG is not an exact X.Y.Z-fpm release. State was not recorded."
+
+    while [[ "${attempt}" -lt 30 ]]
+    do
+        installed="$(nextcloud_occ_status_value installed 2>/dev/null || true)"
+        [[ "${installed}" == "true" ]] && break
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+
+    [[ "${installed}" == "true" ]] \
+        || fail "occ status installed is '${installed:-unset}'. Deploy does not call this a successful installation. No data was deleted."
+
+    versionstring="$(nextcloud_occ_status_value versionstring 2>/dev/null || true)"
+    [[ "${versionstring}" == "${expected}" ]] \
+        || fail "occ versionstring is '${versionstring:-unset}', expected ${expected}. State was not recorded."
+
+    nextcloud_config_marked_installed \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php" \
+        || fail "config.php has no installed => true. State was not recorded. No data was deleted."
+
+    grep -Eq \
+        "['\"]datadirectory['\"][[:space:]]*=>[[:space:]]*['\"]/var/www/html/data['\"]" \
+        "${NEXTCLOUD_HTML_DIR}/config/config.php" \
+        || fail "config.php datadirectory is not /var/www/html/data. The data mount and the installer disagree. No data was deleted."
+
+    if ! table="$(deploy_database_has_admin_uid "$(env_get PG_DB)" "${admin_user}")"; then
+        fail "PostgreSQL has no ${admin_user} account after installation. State was not recorded. No data was deleted."
+    fi
+
+    deploy_existing_admin_home "${data_dir}" "${admin_user}" >/dev/null \
+        || fail "Installation did not create the admin home for ${admin_user}. No data was deleted."
+
+    ok "Nextcloud is installed. ${admin_user} is in ${table}."
+
+    attempt=0
+    while [[ "${attempt}" -lt 90 ]]
+    do
+        cron_health="$(
+            docker inspect \
+                --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                "${NEXTCLOUD_CRON_CONTAINER}" 2>/dev/null || true
+        )"
+        [[ "${cron_health}" == "healthy" ]] && break
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+
+    [[ "${cron_health}" == "healthy" ]] \
+        || fail "Cron health is '${cron_health:-unset}'. occ status in that healthcheck requires installed: true. State was not recorded."
+
+    ok "Cron is running against the installed instance."
+
+    require_command curl
+    attempt=0
+    body=""
+    while [[ "${attempt}" -lt 30 ]]
+    do
+        if body="$(curl -fsS "http://$(env_get NEXTCLOUD_BACKEND_BIND):$(env_get NEXTCLOUD_BACKEND_PORT)/status.php" 2>/dev/null)"; then
+            [[ -n "${body}" ]] && break
+        fi
+        body=""
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    [[ -n "${body}" ]] \
+        || fail "status.php is not reachable. State was not recorded."
+    [[ "${body}" == *'"installed":true'* ]] \
+        || fail "status.php did not report installed:true. HTTP success is not an installation."
+    [[ "${body}" == *'"maintenance":false'* ]] \
+        || fail "status.php reports maintenance mode. State was not recorded."
+
+    ok "status.php reports installed:true."
 }
 
 deploy_compose()
@@ -516,12 +783,13 @@ deploy_compose()
     compose_up "${POSTGRESQL_SERVICE}"
     deploy_wait_postgres
     deploy_align_database_owner
-    deploy_assert_new_install_can_create_admin
+    deploy_prepare_unfinished_install
 
     log_info "Starting the remaining services."
 
     compose_up
-    deploy_wait_nextcloud_install
+    deploy_install_nextcloud_if_needed
+    deploy_require_running_install
 
-    log_success "Nextcloud-Gr started."
+    log_success "Nextcloud-Gr is installed and running."
 }

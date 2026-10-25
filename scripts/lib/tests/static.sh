@@ -35,6 +35,8 @@ test_repository_layout()
     require_file "${root}/configs/nginx/nginx.conf"
     require_file "${root}/scripts/upgrade.sh"
     require_file "${root}/scripts/record-installed.sh"
+    require_file "${root}/scripts/reset-test.sh"
+    require_file "${root}/scripts/lib/deploy/reset.sh"
     require_file "${root}/docs/migration-from-current.md"
     require_file "${root}/docs/upgrade.md"
 
@@ -220,21 +222,86 @@ test_compose_bindings()
         || fail "Role attributes are not read as text."
     grep -Fq 'Login is invalid because files already exist for this user' \
         "${root}/scripts/lib/deploy/compose.sh" \
-        || fail "Deploy does not stop when the admin home already exists."
+        || fail "Deploy does not explain the occ admin-home failure."
+    grep -Fq 'maintenance:install' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy does not run maintenance:install."
+    if grep -Eq '^[[:space:]]+NEXTCLOUD_ADMIN_USER:' \
+        "${root}/compose/30-nextcloud-fpm.yml"
+    then
+        fail "The image entrypoint still receives the admin user and can retry a partial install."
+    fi
+    grep -Fq -- '--confirm' "${root}/scripts/reset-test.sh" \
+        || fail "The test reset has no confirm gate."
+    if grep -E 'rm -rf (/|/(docker-data|nextcloud-data|postgresql-data))([/" ]|$)' \
+        "${root}/scripts/reset-test.sh" \
+        "${root}/scripts/lib/deploy/reset.sh"
+    then
+        fail "The test reset removes a parent directory."
+    fi
+    if grep -q 'compose_cmd down' \
+        "${root}/scripts/reset-test.sh" \
+        "${root}/scripts/lib/deploy/reset.sh"
+    then
+        fail "The test reset removes the Compose project."
+    fi
+    grep -Fq 'BACKUP_LOCAL_DIR' "${root}/scripts/lib/deploy/reset.sh" \
+        || fail "The test reset does not keep local backups."
 
     local admin_home
+    local preserved
+    local action
     local work
     work="$(mktemp -d)"
     # shellcheck disable=SC1091
     source "${root}/scripts/lib/deploy/compose.sh"
+    # shellcheck disable=SC1091
+    source "${root}/scripts/lib/deploy/reset.sh"
     if admin_home="$(deploy_existing_admin_home "${work}" ncadmin)"; then
         fail "An empty data directory was treated as an existing admin home: ${admin_home}"
     fi
     mkdir -p "${work}/ncadmin/files"
+    printf 'kept\n' > "${work}/ncadmin/files/keep.txt"
     admin_home="$(deploy_existing_admin_home "${work}" ncadmin)" \
         || fail "An existing admin home was ignored."
     [[ "${admin_home}" == "${work}/ncadmin" ]] \
         || fail "The conflicting admin home was ${admin_home}, not ${work}/ncadmin."
+    preserved="$(deploy_preserve_orphan_admin_home "${work}" ncadmin)" \
+        || fail "An unfinished admin home was not preserved."
+    [[ "${preserved}" == "${work}/.incomplete-ncadmin-"* && -f "${preserved}/files/keep.txt" ]] \
+        || fail "The unfinished admin home was not kept at ${preserved}."
+    [[ ! -e "${work}/ncadmin" ]] \
+        || fail "The uid path still exists after preserving the unfinished home."
+    action="$(deploy_install_action true present present)"
+    [[ "${action}" == "installed" ]] \
+        || fail "An installed instance would be reinstalled: ${action}"
+    action="$(deploy_install_action false absent absent)"
+    [[ "${action}" == "install" ]] \
+        || fail "A first install was classified as ${action}."
+    action="$(deploy_install_action false present absent)"
+    [[ "${action}" == "preserve-then-install" ]] \
+        || fail "An orphan admin home was classified as ${action}."
+    action="$(deploy_install_action false present present)"
+    [[ "${action}" == "blocked" ]] \
+        || fail "An existing account was classified as ${action}."
+    reset_directory_may_be_emptied /nextcloud-data/test /nextcloud-data \
+        /incus-dir/git/Nextcloud-Gr /docker-data/backups/nextcloud-gr \
+        || fail "The Nextcloud data directory was refused."
+    reset_directory_may_be_emptied /docker-data/nextcloud-gr/html /docker-data \
+        /docker-data/dockge /docker-data/backups/nextcloud-gr \
+        /docker-data/stacks/nextcloud-gr \
+        || fail "The HTML directory was refused."
+    if reset_directory_may_be_emptied /nextcloud-data /nextcloud-data; then
+        fail "The data mountpoint itself was accepted."
+    fi
+    if reset_directory_may_be_emptied / /; then
+        fail "The root directory was accepted."
+    fi
+    if reset_directory_may_be_emptied /docker-data/backups/nextcloud-gr /docker-data \
+        /docker-data/backups/nextcloud-gr
+    then
+        fail "Local backups were accepted for deletion."
+    fi
     rm -rf "${work}"
     awk '
         /^deploy_read_bootstrap_name/ {inside=1}

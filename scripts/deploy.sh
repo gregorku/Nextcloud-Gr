@@ -54,12 +54,14 @@ Description:
     refuse to continue when NEXTCLOUD_TAG differs from the recorded
     installed version. A first installation has neither
     ${INSTALLED_VERSION_FILE} nor config.php. config.php without
-    installed => true is unfinished: the pinned images may start, but
-    state files are written only after post-deploy.sh sees a finished
-    installation. config.php with installed => true and no state file
-    is not started. Use ./scripts/record-installed.sh --confirm
-    ${STACK_NAME} for that case. Deploy does not delete PostgreSQL
-    data or the Nextcloud data directory.
+    installed => true is unfinished: deploy runs maintenance:install
+    once and does not treat a healthy PHP-FPM port as success. An
+    already installed instance is not installed again. config.php with
+    installed => true and no state file is not started. Use
+    ./scripts/record-installed.sh --confirm ${STACK_NAME} for that
+    case. Deploy does not delete PostgreSQL data or the Nextcloud
+    data directory. A test reset is ./scripts/reset-test.sh --confirm
+    ${STACK_NAME}.
 
     rsync --delete applies only to compose/ and configs/. It does not
     delete .env, ${DATA_DIR}, PostgreSQL, the Nextcloud data directory
