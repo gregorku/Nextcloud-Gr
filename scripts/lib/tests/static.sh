@@ -174,6 +174,15 @@ test_compose_bindings()
     grep -Fq 'installed:[[:space:]]*true' \
         "${root}/compose/50-cron.yml" \
         || fail "Cron healthcheck does not require an installed Nextcloud."
+    grep -Fq '/proc/1/cmdline' \
+        "${root}/compose/50-cron.yml" \
+        || fail "Cron healthcheck does not read PID 1 from /proc."
+    grep -Fq 'busybox crond' \
+        "${root}/compose/50-cron.yml" \
+        || fail "Cron healthcheck does not require busybox crond as PID 1."
+    if grep -q 'ps -o args=' "${root}/compose/50-cron.yml"; then
+        fail "Cron healthcheck still calls ps, which the image does not provide."
+    fi
     grep -Fq 'installed:[[:space:]]*true' \
         "${root}/compose/30-nextcloud-fpm.yml" \
         || fail "The application healthcheck treats open port 9000 as a finished install."
