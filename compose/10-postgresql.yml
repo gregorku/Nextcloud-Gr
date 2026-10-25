@@ -14,6 +14,9 @@
 #   notes. PGDATA is /var/lib/postgresql/18/docker. The volume is
 #   /var/lib/postgresql, not /var/lib/postgresql/data.
 #   The Debian image creates user postgres as uid 999.
+#   POSTGRES_USER is PG_USER and initdb makes that role a superuser.
+#   deploy.sh then moves SUPERUSER to nc_bootstrap and leaves PG_USER
+#   as the owner used by Nextcloud and cron.
 #
 ###############################################################################
 

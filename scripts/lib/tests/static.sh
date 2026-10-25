@@ -182,10 +182,29 @@ test_compose_bindings()
         fail "A PostgreSQL client still logs in as the OS role postgres."
     fi
 
-    grep -Fq -- '-U "${db_user}"' "${root}/scripts/lib/docker.sh" \
+    grep -Fq -- '-U "${role}"' "${root}/scripts/lib/docker.sh" \
+        || fail "PostgreSQL clients are not started as the requested role."
+    grep -Fq 'env_get PG_USER' "${root}/scripts/lib/docker.sh" \
         || fail "PostgreSQL clients are not started as PG_USER."
+    grep -Fq 'POSTGRES_BOOTSTRAP_USER' "${root}/scripts/lib/docker.sh" \
+        || fail "Cluster administration has no superuser separate from PG_USER."
     grep -Fq -- '-h 127.0.0.1' "${root}/scripts/lib/docker.sh" \
         || fail "PostgreSQL clients still depend on peer authentication."
+
+    grep -Fq 'NC_setup_create_db_user: "false"' \
+        "${root}/compose/30-nextcloud-fpm.yml" \
+        || fail "Nextcloud can still create a second database role during install."
+    grep -Fq 'NC_setup_create_db_user: "false"' \
+        "${root}/compose/50-cron.yml" \
+        || fail "Cron does not use the same database-role policy as the application."
+    grep -Fq 'NOSUPERUSER NOCREATEDB NOCREATEROLE' \
+        "${root}/scripts/lib/deploy/compose.sh" \
+        || fail "Deploy does not remove SUPERUSER from the application role."
+    if grep -E 'ROLE \$\{user_ident\}' "${root}/scripts/lib/deploy/compose.sh" \
+        | grep -E 'LOGIN SUPERUSER|WITH SUPERUSER'
+    then
+        fail "Deploy grants SUPERUSER to PG_USER."
+    fi
 
     if grep -R -n -E '0\.0\.0\.0:|5432:5432|6379:6379|9000:9000' \
         "${root}/compose" "${root}/compose.yml"; then

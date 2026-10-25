@@ -39,6 +39,7 @@ services:
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
       POSTGRES_PASSWORD: ${PG_PASS}
+      NC_setup_create_db_user: "false"
       NEXTCLOUD_DATA_DIR: /var/www/html/data
       REDIS_HOST: redis
       REDIS_HOST_PORT: "6379"

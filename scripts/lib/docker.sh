@@ -164,41 +164,37 @@ docker_volume_exists() {
 ###############################################################################
 # Run a PostgreSQL client inside the database container.
 #
-# initdb is invoked with --username from POSTGRES_USER, which this
-# project sets from PG_USER. That role is the cluster superuser. The
-# image does not also create a database role named postgres. The OS
-# account in the container is still named postgres, so a client that
-# omits -U asks for a role that does not exist.
-#
-# The client is therefore started as PG_USER over 127.0.0.1, where the
-# image requires the password from PG_PASS. The password is written to
-# a mode 600 env file and is not an argument of docker or psql.
-# A failed connection returns the client status. It is not an empty
-# query result.
+# initdb --username is PG_USER. The image does not create a database
+# role named postgres. The OS account in the container is still named
+# postgres, so a client that omits -U asks for a role that does not
+# exist. Clients connect over 127.0.0.1 as the requested role. The
+# password comes from PG_PASS through a mode 600 env file and is not an
+# argument of docker or psql. A failed connection returns the client
+# status. It is not an empty query result.
 #
 # Arguments:
-#   $1 - Database to open. "postgres" here is the maintenance database
+#   $1 - Database role.
+#   $2 - Database to open. "postgres" here is the maintenance database
 #        created by initdb, not a login role.
-#   Remaining arguments are the client and its options, for example
-#   psql or pg_dump. -h, -U and -d are appended.
+#   Remaining arguments are the client and its options. -h, -U and -d
+#   are appended.
 #
 ###############################################################################
 
-postgres_container_client()
+postgres_container_exec()
 {
-    local database="$1"
-    shift
-    local db_user
+    local role="$1"
+    local database="$2"
+    shift 2
     local db_pass
     local passfile
     local status=0
 
     [[ "$#" -gt 0 ]] || return 1
 
-    db_user="$(env_get PG_USER)" || return 1
     db_pass="$(env_get PG_PASS)" || return 1
 
-    [[ "${db_user}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || return 1
+    [[ "${role}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || return 1
     [[ "${database}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]] || return 1
     [[ -n "${db_pass}" && "${db_pass}" != *$'\n'* ]] || return 1
 
@@ -220,10 +216,28 @@ postgres_container_client()
         "${POSTGRESQL_CONTAINER}" \
         "$@" \
         -h 127.0.0.1 \
-        -U "${db_user}" \
+        -U "${role}" \
         -d "${database}" \
         || status=$?
 
     rm -f "${passfile}"
     return "${status}"
+}
+
+postgres_container_client()
+{
+    local database="$1"
+    shift
+    local db_user
+
+    db_user="$(env_get PG_USER)" || return 1
+    postgres_container_exec "${db_user}" "${database}" "$@"
+}
+
+postgres_container_admin()
+{
+    local database="$1"
+    shift
+
+    postgres_container_exec "${POSTGRES_BOOTSTRAP_USER}" "${database}" "$@"
 }
