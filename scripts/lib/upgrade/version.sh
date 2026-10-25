@@ -11,7 +11,8 @@
 #   Compare Nextcloud tags and PostgreSQL majors without Docker.
 #   deploy.sh uses this to refuse an unnoticed upgrade. upgrade.sh uses
 #   it to allow only the next major, or a newer release of the same
-#   major.
+#   major. record-installed.sh uses it to recover missing evidence
+#   without treating an existing install as a first installation.
 #
 ###############################################################################
 
@@ -107,6 +108,12 @@ deploy_version_decision()
     if [[ -f "${installed_file}" ]]; then
         installed="$(tr -d '[:space:]' < "${installed_file}")"
 
+        if [[ -z "${installed}" ]]; then
+            printf '%s exists but is empty. Refusing to start or replace it.\n' \
+                "${installed_file}"
+            return 1
+        fi
+
         if [[ "${installed}" == "${intended}" ]]; then
             printf 'unchanged\n'
             return 0
@@ -121,9 +128,9 @@ deploy_version_decision()
     fi
 
     if [[ -f "${config_php}" ]]; then
-        printf 'config.php exists but %s does not. Refusing to start an image that might migrate the database. Run ./scripts/post-deploy.sh when the running version already matches %s.\n' \
+        printf 'config.php exists but %s does not. This is an existing installation, not a first install. deploy.sh will not start Compose and will not write state files. If the stack is already running the pinned images, run ./scripts/post-deploy.sh. If it is not running, run ./scripts/record-installed.sh --confirm %s. That command reads the deployed code and PG_VERSION without this state file and starts the pinned images only when they already match that data.\n' \
             "${installed_file}" \
-            "${intended}"
+            "${STACK_NAME}"
         return 1
     fi
 
@@ -137,6 +144,11 @@ deploy_version_decision()
 # Arguments:
 #   $1 - File containing the recorded major, if it exists
 #   $2 - POSTGRES_IMAGE value
+#   $3 - Major read from PG_VERSION, or empty when that file is absent
+#
+# "first" means no state file and no data directory. "unrecorded" means
+# the data directory already uses the pinned major but the state file
+# is still missing. A different data-directory major is refused.
 #
 ###############################################################################
 
@@ -144,6 +156,7 @@ deploy_postgres_major_decision()
 {
     local recorded_file="$1"
     local image="$2"
+    local on_disk="${3:-}"
     local image_major
     local recorded
 
@@ -152,20 +165,223 @@ deploy_postgres_major_decision()
         return 1
     }
 
-    if [[ ! -f "${recorded_file}" ]]; then
-        printf 'first\n'
-        return 0
+    if [[ -n "${on_disk}" && ! "${on_disk}" =~ ^[0-9]+$ ]]; then
+        printf 'PostgreSQL data major %s is not a number.\n' "${on_disk}"
+        return 1
     fi
 
-    recorded="$(tr -d '[:space:]' < "${recorded_file}")"
+    if [[ -f "${recorded_file}" ]]; then
+        recorded="$(tr -d '[:space:]' < "${recorded_file}")"
 
-    if [[ "${recorded}" == "${image_major}" ]]; then
-        printf 'unchanged\n'
-        return 0
+        if [[ -n "${on_disk}" && "${on_disk}" != "${recorded}" ]]; then
+            printf 'PostgreSQL data directory is major %s but %s records major %s. Refusing to start.\n' \
+                "${on_disk}" \
+                "${recorded_file}" \
+                "${recorded}"
+            return 1
+        fi
+
+        if [[ "${recorded}" == "${image_major}" ]]; then
+            printf 'unchanged\n'
+            return 0
+        fi
+
+        printf 'PostgreSQL major on disk is %s and POSTGRES_IMAGE is major %s. Change of database major is a separate migration, not upgrade.sh.\n' \
+            "${recorded}" \
+            "${image_major}"
+        return 1
     fi
 
-    printf 'PostgreSQL major on disk is %s and POSTGRES_IMAGE is major %s. Change of database major is a separate migration, not upgrade.sh.\n' \
-        "${recorded}" \
-        "${image_major}"
+    if [[ -n "${on_disk}" ]]; then
+        if [[ "${on_disk}" == "${image_major}" ]]; then
+            printf 'unrecorded\n'
+            return 0
+        fi
+
+        printf 'PostgreSQL data directory is major %s and POSTGRES_IMAGE is major %s. Refusing to start a different major over existing data.\n' \
+            "${on_disk}" \
+            "${image_major}"
+        return 1
+    fi
+
+    printf 'first\n'
+    return 0
+}
+
+###############################################################################
+# Read $OC_VersionString from a Nextcloud version.php. No PHP is executed.
+#
+# Arguments:
+#   $1 - version.php path
+#
+###############################################################################
+
+nextcloud_version_string_from_php()
+{
+    local file="$1"
+    local value
+
+    [[ -f "${file}" ]] || return 1
+
+    value="$(
+        sed -n \
+            "s/^[[:space:]]*\\\$OC_VersionString[[:space:]]*=[[:space:]]*'\\([0-9][0-9.]*\\)'[[:space:]]*;[[:space:]]*\$/\\1/p" \
+            "${file}"
+    )"
+
+    [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    printf '%s\n' "${value}"
+}
+
+###############################################################################
+# Read the single PG_VERSION under a PostgreSQL 18+ data directory.
+# Layout is <host>/<major>/docker/PG_VERSION.
+#
+# Arguments:
+#   $1 - POSTGRESQL_HOST_DIR
+#
+# Returns:
+#   0 and prints the major
+#   1 when the directory is missing or empty
+#   2 when more than one PG_VERSION exists
+#   3 when a PG_VERSION file is not a plain major number
+#   4 when the directory has data but no single readable major
+#
+###############################################################################
+
+postgres_major_from_data_dir()
+{
+    local host_dir="$1"
+    local entry
+    local path
+    local major
+    local found=""
+    local count=0
+    local listing
+
+    [[ -d "${host_dir}" ]] || return 1
+
+    if ! listing="$(ls -A "${host_dir}")"; then
+        return 4
+    fi
+
+    if [[ -z "${listing}" ]]; then
+        return 1
+    fi
+
+    for entry in "${host_dir}"/*
+    do
+        [[ -d "${entry}" ]] || continue
+        path="${entry}/docker/PG_VERSION"
+        [[ -f "${path}" ]] || continue
+
+        if [[ ! -r "${path}" ]]; then
+            return 4
+        fi
+        major="$(tr -d '[:space:]' < "${path}")" || return 4
+        [[ "${major}" =~ ^[0-9]+$ ]] || return 3
+
+        count=$((count + 1))
+        found="${major}"
+    done
+
+    [[ "${count}" -ne 0 ]] || return 4
+    [[ "${count}" -eq 1 ]] || return 2
+    printf '%s\n' "${found}"
+}
+
+###############################################################################
+# Compare a container image reference with the pinned reference.
+# Accepts the same name with or without the docker.io/library prefix.
+#
+# Arguments:
+#   $1 - Image reported by Docker
+#   $2 - Expected image reference
+#
+###############################################################################
+
+image_reference_matches()
+{
+    local actual="$1"
+    local expected="$2"
+    local short
+
+    [[ -n "${actual}" && -n "${expected}" ]] || return 1
+    [[ "${actual}" == "${expected}" ]] && return 0
+
+    short="${expected#docker.io/}"
+    [[ "${actual}" == "${short}" ]] && return 0
+    [[ "${actual}" == "docker.io/${short}" ]] && return 0
+
+    short="${expected#docker.io/library/}"
+    [[ "${actual}" == "${short}" ]] && return 0
+    [[ "${actual}" == "library/${short}" ]] && return 0
+    [[ "${actual}" == "docker.io/library/${short}" ]] && return 0
+
     return 1
+}
+
+###############################################################################
+# Compare Nextcloud code already stored in the HTML volume with the pin.
+# A missing version.php is "absent". A different or unreadable file refuses
+# the start. deploy.sh calls this before Compose.
+#
+# Arguments:
+#   $1 - version.php path
+#   $2 - intended NEXTCLOUD_TAG
+#
+###############################################################################
+
+deploy_on_disk_code_decision()
+{
+    local version_php_file="$1"
+    local intended="$2"
+    local code
+    local expected
+
+    if [[ ! -f "${version_php_file}" ]]; then
+        printf 'absent\n'
+        return 0
+    fi
+
+    if ! code="$(nextcloud_version_string_from_php "${version_php_file}")"; then
+        printf 'version.php has no exact Nextcloud version. Refusing to start an image over unreadable code.\n'
+        return 1
+    fi
+
+    if ! expected="$(upgrade_release_number "${intended}")"; then
+        printf 'NEXTCLOUD_TAG %s is not an exact X.Y.Z-fpm release.\n' "${intended}"
+        return 1
+    fi
+
+    if [[ "${code}" != "${expected}" ]]; then
+        printf 'Nextcloud code in version.php is %s and NEXTCLOUD_TAG is %s. Refusing to start a different version over existing code.\n' \
+            "${code}" \
+            "${intended}"
+        return 1
+    fi
+
+    printf 'match\n'
+    return 0
+}
+
+###############################################################################
+# Arguments:
+#   $1 - upgrade lock path
+#
+# Prints an operator message and returns 1 when the lock exists.
+#
+###############################################################################
+
+deploy_upgrade_lock_decision()
+{
+    local lock_file="$1"
+
+    if [[ -f "${lock_file}" ]]; then
+        printf 'Upgrade lock %s is present. Finish or clear the failed upgrade before deploy.sh.\n' \
+            "${lock_file}"
+        return 1
+    fi
+
+    return 0
 }

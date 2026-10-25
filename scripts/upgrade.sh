@@ -36,6 +36,7 @@ source "${SCRIPT_DIR}/lib/checks/load.sh"
 source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/deploy/state-file.sh"
 source "${SCRIPT_DIR}/lib/upgrade/php.sh"
 source "${SCRIPT_DIR}/lib/upgrade/apps.sh"
 source "${SCRIPT_DIR}/lib/upgrade/sequence.sh"
@@ -145,17 +146,34 @@ pinned="$(env_get NEXTCLOUD_TAG)"
     || fail "Target ${target} is not NEXTCLOUD_TAG ${pinned}. Update the Git pin and run update-env.sh first."
 
 [[ -f "${INSTALLED_VERSION_FILE}" ]] \
-    || fail "No installed version is recorded. Refusing to guess."
+    || fail "No installed version is recorded. Refusing to guess. Run ./scripts/record-installed.sh --confirm ${STACK_NAME} when the deployed version already matches NEXTCLOUD_TAG."
 
 installed="$(tr -d '[:space:]' < "${INSTALLED_VERSION_FILE}")"
 
 upgrade_step_allowed "${installed}" "${target}" \
     || fail "Refusing ${installed} -> ${target}. Move one major at a time, or to a newer release of the same major. Downgrades are refused."
 
+pg_dir="$(env_get POSTGRESQL_HOST_DIR)"
+disk_major=""
+disk_status=0
+if [[ -n "${pg_dir}" ]]; then
+    disk_major="$(postgres_major_from_data_dir "${pg_dir}")" || disk_status=$?
+    if [[ "${disk_status}" -eq 2 ]]; then
+        fail "More than one PG_VERSION file is under ${pg_dir}. Refusing to guess the PostgreSQL major."
+    fi
+    if [[ "${disk_status}" -eq 3 || "${disk_status}" -eq 4 ]]; then
+        fail "PostgreSQL data under ${pg_dir} has no single readable major. upgrade.sh will not change database majors."
+    fi
+    if [[ "${disk_status}" -ne 0 ]]; then
+        disk_major=""
+    fi
+fi
+
 postgres_decision="$(
     deploy_postgres_major_decision \
         "${POSTGRES_MAJOR_FILE}" \
-        "$(env_get POSTGRES_IMAGE)"
+        "$(env_get POSTGRES_IMAGE)" \
+        "${disk_major}"
 )" || fail "${postgres_decision}"
 
 [[ "${postgres_decision}" == "unchanged" ]] \
@@ -244,8 +262,8 @@ if ! upgrade_run_sequence; then
     fail "Upgrade to ${target} failed. Cron was not left running and the previous image was not started."
 fi
 
-printf '%s\n' "${target}" > "${INSTALLED_VERSION_FILE}"
-chmod 600 "${INSTALLED_VERSION_FILE}"
+state_write_file "${INSTALLED_VERSION_FILE}" "${target}" \
+    || fail "Could not record installed version ${target}."
 rm -f "${UPGRADE_LOCK_FILE}"
 
 trap - EXIT

@@ -59,6 +59,7 @@ source "${SCRIPT_DIR}/lib/checks/load.sh"
 source "${SCRIPT_DIR}/lib/env/load.sh"
 source "${SCRIPT_DIR}/lib/nextcloud/occ.sh"
 source "${SCRIPT_DIR}/lib/upgrade/version.sh"
+source "${SCRIPT_DIR}/lib/deploy/state-file.sh"
 
 ###############################################################################
 # Post-deployment modules
@@ -82,10 +83,18 @@ Usage:
 
 Description:
 
-    Check PostgreSQL, Redis, PHP-FPM, Nginx and cron. Confirm occ
-    status, APCu, /status.php and that database ports are not
-    published. Record the installed Nextcloud tag when those checks
-    pass.
+    Wait until PostgreSQL, Redis, PHP-FPM, Nginx and cron are healthy.
+    Confirm the running images, occ status, APCu, /status.php and that
+    database ports are not published. An unfinished first installation
+    does not get state files. Record the installed Nextcloud tag and
+    the PostgreSQL major only after every check passes. The files are
+    replaced atomically. A failed check leaves the previous evidence
+    unchanged.
+
+    This requires the containers to be running. When config.php exists
+    and the stack is stopped, run ./scripts/record-installed.sh
+    --confirm ${STACK_NAME} instead of starting a different version
+    with deploy.sh.
 
 EOF
 }

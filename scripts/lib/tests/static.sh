@@ -34,6 +34,7 @@ test_repository_layout()
     require_file "${root}/compose/50-cron.yml"
     require_file "${root}/configs/nginx/nginx.conf"
     require_file "${root}/scripts/upgrade.sh"
+    require_file "${root}/scripts/record-installed.sh"
     require_file "${root}/docs/migration-from-current.md"
     require_file "${root}/docs/upgrade.md"
 

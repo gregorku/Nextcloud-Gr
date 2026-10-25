@@ -52,7 +52,11 @@ Description:
     Synchronize DEPLOY_ITEMS into ${STACK_DIR}, validate .env and
     refuse to continue when NEXTCLOUD_TAG differs from the recorded
     installed version. A first installation has neither
-    ${INSTALLED_VERSION_FILE} nor config.php.
+    ${INSTALLED_VERSION_FILE} nor config.php. An existing config.php
+    without that state file is not a first installation: deploy.sh
+    does not start it. Use ./scripts/record-installed.sh --confirm
+    ${STACK_NAME} to verify the deployed version, or post-deploy.sh
+    when the pinned images are already running.
 
     rsync --delete applies only to compose/ and configs/. It does not
     delete .env, ${DATA_DIR}, PostgreSQL, the Nextcloud data directory
